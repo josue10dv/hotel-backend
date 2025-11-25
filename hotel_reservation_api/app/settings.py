@@ -10,7 +10,14 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
+from datetime import timedelta
 from pathlib import Path
+from . import env_settings
+
+
+# Get the secret key from the environment variables
+SECRET_KEY = env_settings['SECRET_KEY']
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,11 +26,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-k7!@-6ar94wsg+5cn4&l@t@wx5f+rs418+)kk2z5gfv^+@x9w2'
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_settings['DEBUG'].lower() == 'true'
 
 ALLOWED_HOSTS = []
 
@@ -37,6 +41,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'rest_framework',
+    'backend.users',
 ]
 
 MIDDLEWARE = [
@@ -74,8 +80,12 @@ WSGI_APPLICATION = 'app.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': env_settings['DB_NAME'],
+        'USER': env_settings['DB_USER'],
+        'PASSWORD': env_settings['DB_PASS'],
+        'HOST': env_settings['DB_HOST'],
+        'PORT': env_settings['DB_PORT']
     }
 }
 
@@ -120,3 +130,10 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+
+SIMPLE_JWT = {
+  'ACCESS_TOKEN_LIFETIME': timedelta(minutes=float(env_settings['JWT_ACCESS_MINUTES'])),
+  'REFRESH_TOKEN_LIFETIME': timedelta(days=float(env_settings['JWT_REFRESH_DAYS'])),
+}
