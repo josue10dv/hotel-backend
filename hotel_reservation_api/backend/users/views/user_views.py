@@ -12,7 +12,7 @@ class UserRegistrationView(APIView):
     """
     permission_classes = [AllowAny]
     
-    def post(self, request):
+    def create(self, request):
         """
         Register a new user.
         

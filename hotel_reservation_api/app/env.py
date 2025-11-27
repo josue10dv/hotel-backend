@@ -1,9 +1,29 @@
 import os
 from dotenv import load_dotenv
+# Clase de datos para definir las variables de entorno
+class EnvSettings:
+    '''
+    Clase para definir las variables de entorno requeridas.
+    '''
+    SECRET_KEY: str
+    DEBUG: bool
+    ALLOWED_HOSTS: list[str]
+    DB_NAME: str
+    DB_USER: str
+    DB_PASS: str
+    DB_HOST: str
+    DB_PORT: str
+    JWT_ACCESS_MINUTES: float
+    JWT_REFRESH_DAYS: float
+    
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
 # Obtiene las variables de entorno desde un archivo .env
 load_dotenv()
 # Valida que las variables requeridas estén presentes
-required_vars = [
+required_vars: list[str] = [
     'SECRET_KEY',
     'DEBUG',
     'ALLOWED_HOSTS',
