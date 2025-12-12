@@ -27,7 +27,7 @@ jobs:
               env:
                   SECRET_KEY: test-secret-key
               run: |
-                  python manage.py test
+                  python ./hotel_reservation_api/manage.py test
 
     deploy:
         needs: test
