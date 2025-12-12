@@ -1,0 +1,75 @@
+name: Deploy Hotel Backend to Azure VM
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v4
+              with:
+                  python-version: "3.12.3"
+
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements.txt
+
+            - name: Run tests
+              env:
+                  SECRET_KEY: test-secret-key
+              run: |
+                  python manage.py test
+
+    deploy:
+        needs: test
+        runs-on: ubuntu-latest
+        if: github.ref == 'refs/heads/main'
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Deploy to Azure VM
+              env:
+                  HOST: ${{ secrets.HOST }}
+                  USER: ${{ secrets.USER }}
+                  DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+                  PROJECT_PATH: ${{ secrets.PROJECT_PATH }}
+              run: |
+                  ssh $USER@$HOST "
+                    set -e
+
+                    echo '✅ 1. Actualizando código...'
+                    cd $DEPLOY_PATH
+                    git fetch origin
+                    git reset --hard origin/main
+
+                    echo '✅ 2. Activando entorno virtual...'
+                    source $DEPLOY_PATH/.venv/bin/activate
+
+                    echo '✅ 3. Instalando dependencias...'
+                    pip install -r requirements.txt
+
+                    echo '✅ 4. Se cambia al directorio del proyecto...'
+                    cd $DEPLOY_PATH
+
+                    echo '✅ 5. Aplicando migraciones...'
+                    python manage.py migrate --noinput
+
+                    echo '✅ 6. Colectando archivos estáticos...'
+                    python manage.py collectstatic --noinput --clear
+
+                    echo '✅ 7. Reiniciando servicios...'
+                    sudo systemctl restart gunicorn
+                    sudo systemctl restart nginx
+
+                    echo '🚀 DESPLIEGUE COMPLETADO CON ÉXITO'
+                  "
