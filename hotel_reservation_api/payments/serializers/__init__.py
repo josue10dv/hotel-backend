@@ -7,7 +7,8 @@ from .payment_serializer import (
     PaymentDetailSerializer,
     PaymentRefundSerializer,
     TransactionSerializer,
-    PaymentMethodSerializer
+    PaymentMethodSerializer,
+    PaymentStatisticsSerializer
 )
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     PaymentDetailSerializer,
     PaymentRefundSerializer,
     TransactionSerializer,
-    PaymentMethodSerializer
+    PaymentMethodSerializer,
+    PaymentStatisticsSerializer
 ]
