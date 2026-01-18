@@ -1,0 +1,14 @@
+"""
+URLs para el módulo de pagos.
+"""
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from payments.views import PaymentViewSet
+
+# Crear router para ViewSets
+router = DefaultRouter()
+router.register(r'payments', PaymentViewSet, basename='payment')
+
+urlpatterns = [
+    path('', include(router.urls)),
+]
