@@ -53,6 +53,16 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            - name: Setup SSH
+              env:
+                  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+                  HOST: ${{ secrets.HOST }}
+              run: |
+                  mkdir -p ~/.ssh
+                  echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+                  chmod 600 ~/.ssh/id_rsa
+                  ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+
             - name: Deploy to Azure VM
               env:
                   HOST: ${{ secrets.HOST }}
