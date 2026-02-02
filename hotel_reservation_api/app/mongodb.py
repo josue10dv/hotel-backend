@@ -6,6 +6,7 @@ Use this module to interact with MongoDB collections.
 from pymongo import MongoClient
 from django.conf import settings
 from urllib.parse import quote_plus
+import certifi
 
 
 class MongoDBConnection:
@@ -33,20 +34,33 @@ class MongoDBConnection:
         username = mongo_settings.get('username', '')
         password = mongo_settings.get('password', '')
         
-        # Build connection string based on whether authentication is needed
+        # MongoDB Atlas usa mongodb+srv:// (sin puerto). Local usa mongodb://host:port
+        is_atlas = '.mongodb.net' in host
+        
         if username and password:
-            # With authentication - encode credentials for special characters
             username_encoded = quote_plus(username)
             password_encoded = quote_plus(password)
-            connection_string = (
-                f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                f"{db_name}?authSource=admin"
-            )
+            if is_atlas:
+                connection_string = (
+                    f"mongodb+srv://{username_encoded}:{password_encoded}@{host}/"
+                    f"{db_name}?retryWrites=true&w=majority"
+                )
+            else:
+                connection_string = (
+                    f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
+                    f"{db_name}?authSource=admin"
+                )
         else:
-            # Without authentication (local development)
-            connection_string = f"mongodb://{host}:{port}/"
+            if is_atlas:
+                connection_string = f"mongodb+srv://{host}/{db_name}?retryWrites=true&w=majority"
+            else:
+                connection_string = f"mongodb://{host}:{port}/"
         
-        self._client = MongoClient(connection_string)
+        # En macOS/Atlas: usar certifi para que SSL encuentre los certificados (evita CERTIFICATE_VERIFY_FAILED)
+        if is_atlas:
+            self._client = MongoClient(connection_string, tlsCAFile=certifi.where())
+        else:
+            self._client = MongoClient(connection_string)
         self._db = self._client[db_name]
 
     @property

@@ -3,12 +3,24 @@ Servicio para la gestión de hoteles en MongoDB.
 Contiene toda la lógica de negocio y operaciones de base de datos.
 """
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, List, Optional
 from bson import ObjectId
 from bson.errors import InvalidId
 from app.mongodb import mongo_db
 from hotels.schemas.hotel_schema import HotelSchema
 import uuid
+
+
+def _to_bson_safe(obj):
+    """Convierte Decimal y otros tipos no serializables por BSON (MongoDB)."""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _to_bson_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_bson_safe(v) for v in obj]
+    return obj
 
 
 class HotelService:
@@ -247,6 +259,8 @@ class HotelService:
             room = HotelSchema.get_room_structure()
             room.update(room_data)
             room['room_id'] = str(uuid.uuid4())
+            # MongoDB/BSON no soporta Decimal; convertir a float
+            room = _to_bson_safe(room)
             
             # Agregar habitación al array
             result = self.collection.update_one(
@@ -297,6 +311,8 @@ class HotelService:
                 update_fields[f"rooms.$.{key}"] = value
             
             update_fields["updated_at"] = datetime.utcnow()
+            # MongoDB/BSON no soporta Decimal; convertir a float
+            update_fields = _to_bson_safe(update_fields)
             
             # Actualizar habitación específica
             result = self.collection.update_one(
