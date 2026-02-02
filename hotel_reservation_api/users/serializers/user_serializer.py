@@ -9,8 +9,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     """
     Serializer para el registro de nuevos usuarios.
     
-    Valida y crea usuarios con username, email y contraseña.
-    Incluye validaciones de unicidad y confirmación de contraseña.
+    Valida y crea usuarios con nombre de usuario, correo electrónico y contraseña.
+    Incluye validación de unicidad y confirmación de contraseña.
+    
+    Campos:
+        username (str): Nombre de usuario único.
+        email (EmailField): Dirección de correo electrónico única.
+        password (str): Contraseña que cumple con los requisitos de validación.
+        password_confirm (str): Confirmación de contraseña (debe coincidir con password).
+        user_type (str): Tipo de cuenta de usuario.
     """
 
     password = serializers.CharField(
@@ -30,23 +37,56 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         extra_kwargs = {"username": {"required": True}, "email": {"required": True}}
 
     def validate_email(self, value):
-        """Valida que el email sea único en el sistema."""
+        """
+        Valida la unicidad del correo electrónico en el sistema.
+        
+        Args:
+            value (str): Dirección de correo electrónico a validar.
+            
+        Returns:
+            str: Dirección de correo electrónico validada.
+            
+        Raises:
+            ValidationError: Si el correo electrónico ya existe.
+        """
         if User.objects.filter(email=value).exists():
             raise serializers.ValidationError(
-                "Ya existe un usuario con este email."
+                "A user with this email already exists."
             )
         return value
 
     def validate_username(self, value):
-        """Valida que el nombre de usuario sea único en el sistema."""
+        """
+        Valida la unicidad del nombre de usuario en el sistema.
+        
+        Args:
+            value (str): Nombre de usuario a validar.
+            
+        Returns:
+            str: Nombre de usuario validado.
+            
+        Raises:
+            ValidationError: Si el nombre de usuario ya existe.
+        """
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError(
-                "Ya existe un usuario con este nombre de usuario."
+                "A user with this username already exists."
             )
         return value
 
     def validate(self, attrs):
-        """Valida que ambas contraseñas coincidan."""
+        """
+        Valida que ambas contraseñas coincidan.
+        
+        Args:
+            attrs (dict): Todos los valores de los campos.
+            
+        Returns:
+            dict: Atributos validados.
+            
+        Raises:
+            ValidationError: Si las contraseñas no coinciden.
+        """
         if attrs["password"] != attrs["password_confirm"]:
             raise serializers.ValidationError(
                 {"password": "Las contraseñas no coinciden."}
@@ -55,9 +95,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Crea y retorna una nueva instancia de usuario con contraseña encriptada.
+        Crea y retorna el usuario creado con sus credenciales encriptadas.
         
-        Utiliza create_user() para asegurar el hash correcto de la contraseña.
+        Usa create_user() para asegurar el hash correcto de la contraseña.
+        
+        Args:
+            validated_data (dict): Datos validados del usuario.
+            
+        Returns:
+            User: Instancia del usuario creado.
         """
         validated_data.pop("password_confirm")
 
@@ -76,6 +122,16 @@ class UserSerializer(serializers.ModelSerializer):
     
     Excluye información sensible como contraseñas.
     Campos de solo lectura: id, date_joined.
+    
+    Campos:
+        id (UUID): Identificador único del usuario (solo lectura).
+        username (str): Nombre de usuario.
+        email (EmailField): Dirección de correo electrónico.
+        first_name (str): Nombre.
+        last_name (str): Apellido.
+        user_type (str): Tipo de cuenta.
+        date_joined (DateTime): Fecha de registro (solo lectura).
+        is_active (bool): Estado activo de la cuenta.
     """
 
     class Meta:
@@ -95,10 +151,17 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
-    Serializer para actualizar información de usuarios.
+    Serializer para actualizar información del usuario.
     
-    Permite actualizar: username, email, first_name, last_name.
-    Valida unicidad de email y username excluyendo el usuario actual.
+    Permite actualizar: nombre de usuario, correo electrónico, nombre, apellido.
+    Valida la unicidad del correo electrónico y nombre de usuario excluyendo al usuario actual.
+    
+    Campos:
+        username (str): Nombre de usuario.
+        email (EmailField): Dirección de correo electrónico.
+        first_name (str): Nombre.
+        last_name (str): Apellido.
+        user_type (str): Tipo de cuenta.
     """
 
     email = serializers.EmailField(required=False)
@@ -132,10 +195,15 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
 class ChangePasswordSerializer(serializers.Serializer):
     """
-    Serializer para cambio de contraseña de usuario.
+    Serializer para el cambio de contraseña del usuario.
     
     Requiere: contraseña actual, nueva contraseña y confirmación.
-    Valida que la contraseña actual sea correcta y que las nuevas coincidan.
+    Valida que la contraseña actual sea correcta y que las nuevas contraseñas coincidan.
+    
+    Campos:
+        old_password (str): Contraseña actual para verificación.
+        new_password (str): Nueva contraseña (debe cumplir con los requisitos de validación).
+        new_password_confirm (str): Confirmación de la nueva contraseña.
     """
 
     old_password = serializers.CharField(required=True, write_only=True)
@@ -145,22 +213,49 @@ class ChangePasswordSerializer(serializers.Serializer):
     new_password_confirm = serializers.CharField(required=True, write_only=True)
 
     def validate_old_password(self, value):
-        """Valida que la contraseña actual sea correcta."""
+        """
+        Valida que la contraseña actual sea correcta.
+        
+        Args:
+            value (str): Contraseña actual proporcionada por el usuario.
+            
+        Returns:
+            str: Contraseña validada.
+            
+        Raises:
+            ValidationError: Si la contraseña actual es incorrecta.
+        """
         user = self.context["request"].user
         if not user.check_password(value):
             raise serializers.ValidationError("La contraseña actual es incorrecta.")
         return value
 
     def validate(self, attrs):
-        """Valida que ambas contraseñas nuevas coincidan."""
+        """
+        Valida que ambas nuevas contraseñas coincidan.
+        
+        Args:
+            attrs (dict): Todos los valores de los campos.
+            
+        Returns:
+            dict: Atributos validados.
+            
+        Raises:
+            ValidationError: Si las nuevas contraseñas no coinciden.
+        """
         if attrs["new_password"] != attrs["new_password_confirm"]:
             raise serializers.ValidationError(
-                {"new_password": "Las contraseñas nuevas no coinciden."}
+                {"new_password": "Las nuevas contraseñas no coinciden."}
             )
         return attrs
 
     def save(self, **kwargs):
-        """Actualiza la contraseña del usuario."""
+        """
+        Actualiza la contraseña del usuario.
+        
+        Returns:
+            User: Instancia de usuario actualizada.
+        """
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
         user.save()

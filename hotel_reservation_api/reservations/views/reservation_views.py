@@ -1,10 +1,10 @@
 """
-Views para la gestión de reservaciones.
+Vistas para la gestión de reservaciones.
+
 Implementa endpoints REST usando ViewSets de Django REST Framework.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from reservations.serializers import (
     ReservationCreateSerializer,
@@ -14,7 +14,16 @@ from reservations.serializers import (
     CheckAvailabilitySerializer
 )
 from reservations.services.reservation_service import ReservationService
-from datetime import datetime
+from app.utilities import (
+    created_response,
+    success_response,
+    error_response,
+    validation_error_response,
+    permission_denied_response,
+    not_found_response,
+    parse_datetime_param,
+    check_user_type,
+)
 
 
 class ReservationViewSet(viewsets.ViewSet):
@@ -51,38 +60,35 @@ class ReservationViewSet(viewsets.ViewSet):
         
         POST /api/reservations/
         """
-        # Validar que el usuario sea tipo guest
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'guest':
-            return Response(
-                {'error': 'Solo los huéspedes pueden crear reservaciones'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        # Validate user type using utility
+        permission_error = check_user_type(
+            request.user, 
+            'guest', 
+            'Only guests can create reservations'
+        )
+        if permission_error:
+            return permission_error
         
         serializer = ReservationCreateSerializer(data=request.data)
+        
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(serializer.errors)
         
         try:
             reservation = self.reservation_service.create_reservation(
                 serializer.validated_data,
                 request.user.id
             )
-            return Response(
-                {
-                    'message': 'Reservación creada exitosamente',
-                    'data': reservation
-                },
-                status=status.HTTP_201_CREATED
+            return created_response(
+                data=reservation,
+                message='Reservation created successfully'
             )
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al crear la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error creating reservation: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     def list(self, request):
@@ -92,30 +98,24 @@ class ReservationViewSet(viewsets.ViewSet):
         GET /api/reservations/
         Query params opcionales: status, from_date, to_date
         """
-        # Obtener filtros de query params
+        # Build filters from query params
         filters = {}
+        
         if request.query_params.get('status'):
             filters['status'] = request.query_params.get('status')
-        if request.query_params.get('from_date'):
-            try:
-                filters['from_date'] = datetime.fromisoformat(
-                    request.query_params.get('from_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de from_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.query_params.get('to_date'):
-            try:
-                filters['to_date'] = datetime.fromisoformat(
-                    request.query_params.get('to_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de to_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        
+        # Parse date parameters using utility
+        from_date, error = parse_datetime_param(request.query_params.get('from_date'), 'from_date')
+        if error:
+            return error
+        if from_date:
+            filters['from_date'] = from_date
+        
+        to_date, error = parse_datetime_param(request.query_params.get('to_date'), 'to_date')
+        if error:
+            return error
+        if to_date:
+            filters['to_date'] = to_date
         
         try:
             reservations = self.reservation_service.get_reservations_by_guest(
@@ -123,17 +123,14 @@ class ReservationViewSet(viewsets.ViewSet):
                 filters
             )
             serializer = ReservationListSerializer(reservations, many=True)
-            return Response(
-                {
-                    'count': len(reservations),
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            return success_response(data={
+                'count': len(reservations),
+                'reservations': serializer.data
+            })
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener reservaciones: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error retrieving reservations: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     def retrieve(self, request, pk=None):
@@ -144,27 +141,24 @@ class ReservationViewSet(viewsets.ViewSet):
         """
         try:
             reservation = self.reservation_service.get_reservation_by_id(pk)
-            if not reservation:
-                return Response(
-                    {'error': 'Reservación no encontrada'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
             
-            # Verificar que el usuario tenga permiso para ver esta reservación
+            if not reservation:
+                return not_found_response('Reservation')
+            
+            # Verify user has permission to view this reservation
             user_id = str(request.user.id)
             if (reservation['guest_id'] != user_id and 
                 reservation['owner_id'] != user_id):
-                return Response(
-                    {'error': 'No tienes permiso para ver esta reservación'},
-                    status=status.HTTP_403_FORBIDDEN
+                return permission_denied_response(
+                    'You do not have permission to view this reservation'
                 )
             
             serializer = ReservationDetailSerializer(reservation)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            return success_response(data=serializer.data)
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error retrieving reservation: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['patch'], url_path='cancel')
@@ -178,10 +172,7 @@ class ReservationViewSet(viewsets.ViewSet):
         cancellation_reason = request.data.get('cancellation_reason', '')
         
         if not cancellation_reason:
-            return Response(
-                {'error': 'Debe proporcionar una razón de cancelación'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response('Debe proporcionar una razón de cancelación')
         
         try:
             reservation = self.reservation_service.update_reservation_status(
@@ -191,22 +182,16 @@ class ReservationViewSet(viewsets.ViewSet):
                 'guest',
                 cancellation_reason
             )
-            return Response(
-                {
-                    'message': 'Reservación cancelada exitosamente',
-                    'data': reservation
-                },
-                status=status.HTTP_200_OK
+            return success_response(
+                data=reservation,
+                message='Reservación cancelada exitosamente'
             )
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al cancelar la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al cancelar la reservación: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['get'], url_path='my-properties')
@@ -218,38 +203,33 @@ class ReservationViewSet(viewsets.ViewSet):
         Query params opcionales: status, hotel_id, from_date, to_date
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden acceder a esta información'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden acceder a esta información'
+        )
+        if permission_error:
+            return permission_error
         
-        # Obtener filtros de query params
+        # Construir filtros
         filters = {}
         if request.query_params.get('status'):
             filters['status'] = request.query_params.get('status')
         if request.query_params.get('hotel_id'):
             filters['hotel_id'] = request.query_params.get('hotel_id')
-        if request.query_params.get('from_date'):
-            try:
-                filters['from_date'] = datetime.fromisoformat(
-                    request.query_params.get('from_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de from_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.query_params.get('to_date'):
-            try:
-                filters['to_date'] = datetime.fromisoformat(
-                    request.query_params.get('to_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de to_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        
+        # Parsear fechas
+        from_date, error = parse_datetime_param(request.query_params.get('from_date'), 'from_date')
+        if error:
+            return error
+        if from_date:
+            filters['from_date'] = from_date
+        
+        to_date, error = parse_datetime_param(request.query_params.get('to_date'), 'to_date')
+        if error:
+            return error
+        if to_date:
+            filters['to_date'] = to_date
         
         try:
             reservations = self.reservation_service.get_reservations_by_owner(
@@ -257,17 +237,14 @@ class ReservationViewSet(viewsets.ViewSet):
                 filters
             )
             serializer = ReservationListSerializer(reservations, many=True)
-            return Response(
-                {
-                    'count': len(reservations),
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            return success_response(data={
+                'count': len(reservations),
+                'reservations': serializer.data
+            })
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener reservaciones: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener reservaciones: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['patch'], url_path='confirm')
@@ -278,11 +255,13 @@ class ReservationViewSet(viewsets.ViewSet):
         PATCH /api/reservations/{id}/confirm/
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden confirmar reservaciones'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden confirmar reservaciones'
+        )
+        if permission_error:
+            return permission_error
         
         try:
             reservation = self.reservation_service.update_reservation_status(
@@ -291,22 +270,16 @@ class ReservationViewSet(viewsets.ViewSet):
                 str(request.user.id),
                 'owner'
             )
-            return Response(
-                {
-                    'message': 'Reservación confirmada exitosamente',
-                    'data': reservation
-                },
-                status=status.HTTP_200_OK
+            return success_response(
+                data=reservation,
+                message='Reservación confirmada exitosamente'
             )
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al confirmar la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al confirmar la reservación: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['patch'], url_path='reject')
@@ -317,11 +290,13 @@ class ReservationViewSet(viewsets.ViewSet):
         PATCH /api/reservations/{id}/reject/
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden rechazar reservaciones'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden rechazar reservaciones'
+        )
+        if permission_error:
+            return permission_error
         
         try:
             reservation = self.reservation_service.update_reservation_status(
@@ -330,22 +305,16 @@ class ReservationViewSet(viewsets.ViewSet):
                 str(request.user.id),
                 'owner'
             )
-            return Response(
-                {
-                    'message': 'Reservación rechazada exitosamente',
-                    'data': reservation
-                },
-                status=status.HTTP_200_OK
+            return success_response(
+                data=reservation,
+                message='Reservación rechazada exitosamente'
             )
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al rechazar la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al rechazar la reservación: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['patch'], url_path='complete')
@@ -356,11 +325,13 @@ class ReservationViewSet(viewsets.ViewSet):
         PATCH /api/reservations/{id}/complete/
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden completar reservaciones'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden completar reservaciones'
+        )
+        if permission_error:
+            return permission_error
         
         try:
             reservation = self.reservation_service.update_reservation_status(
@@ -369,22 +340,16 @@ class ReservationViewSet(viewsets.ViewSet):
                 str(request.user.id),
                 'owner'
             )
-            return Response(
-                {
-                    'message': 'Reservación marcada como completada',
-                    'data': reservation
-                },
-                status=status.HTTP_200_OK
+            return success_response(
+                data=reservation,
+                message='Reservación marcada como completada'
             )
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al completar la reservación: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al completar la reservación: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['get'], url_path='check-availability')
@@ -397,7 +362,7 @@ class ReservationViewSet(viewsets.ViewSet):
         """
         serializer = CheckAvailabilitySerializer(data=request.query_params)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(serializer.errors)
         
         try:
             is_available = self.reservation_service.check_availability(
@@ -407,18 +372,15 @@ class ReservationViewSet(viewsets.ViewSet):
                 serializer.validated_data['check_out']
             )
             
-            return Response(
-                {
-                    'available': is_available,
-                    'message': 'La habitación está disponible' if is_available 
-                              else 'La habitación no está disponible en las fechas seleccionadas'
-                },
-                status=status.HTTP_200_OK
+            return success_response(
+                data={'available': is_available},
+                message='La habitación está disponible' if is_available 
+                        else 'La habitación no está disponible en las fechas seleccionadas'
             )
         except Exception as e:
-            return Response(
-                {'error': f'Error al verificar disponibilidad: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al verificar disponibilidad: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['get'], url_path='calendar')
@@ -430,54 +392,44 @@ class ReservationViewSet(viewsets.ViewSet):
         Query params: hotel_id, year, month
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden acceder al calendario'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden acceder al calendario'
+        )
+        if permission_error:
+            return permission_error
         
         hotel_id = request.query_params.get('hotel_id')
         year = request.query_params.get('year')
         month = request.query_params.get('month')
         
         if not all([hotel_id, year, month]):
-            return Response(
-                {'error': 'Se requieren los parámetros: hotel_id, year, month'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response('Se requieren los parámetros: hotel_id, year, month')
         
         try:
             year = int(year)
             month = int(month)
             
             if month < 1 or month > 12:
-                return Response(
-                    {'error': 'El mes debe estar entre 1 y 12'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return error_response('El mes debe estar entre 1 y 12')
             
             reservations = self.reservation_service.get_calendar_reservations(
                 hotel_id, year, month
             )
             serializer = ReservationListSerializer(reservations, many=True)
             
-            return Response(
-                {
-                    'hotel_id': hotel_id,
-                    'year': year,
-                    'month': month,
-                    'count': len(reservations),
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            return success_response(data={
+                'hotel_id': hotel_id,
+                'year': year,
+                'month': month,
+                'count': len(reservations),
+                'reservations': serializer.data
+            })
         except ValueError:
-            return Response(
-                {'error': 'Formato de year o month inválido'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response('Formato de year o month inválido')
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener el calendario: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener el calendario: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

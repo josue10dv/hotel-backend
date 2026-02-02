@@ -1,10 +1,10 @@
 """
-Views para la gestión de pagos.
+Vistas para la gestión de pagos.
+
 Implementa endpoints REST usando ViewSets de Django REST Framework.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from payments.models import Payment, Transaction
@@ -17,7 +17,15 @@ from payments.serializers import (
     PaymentStatisticsSerializer
 )
 from payments.services.payment_service import PaymentService
-from datetime import datetime
+from app.utilities import (
+    created_response,
+    success_response,
+    error_response,
+    validation_error_response,
+    permission_denied_response,
+    parse_datetime_param,
+    check_user_type,
+)
 
 
 class PaymentViewSet(viewsets.ViewSet):
@@ -61,7 +69,7 @@ class PaymentViewSet(viewsets.ViewSet):
         """
         serializer = PaymentCreateSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return validation_error_response(serializer.errors)
         
         try:
             # Crear el registro de pago
@@ -76,12 +84,9 @@ class PaymentViewSet(viewsets.ViewSet):
             if not payment_token:
                 # Si no hay token, solo crear el registro en estado pending
                 detail_serializer = PaymentDetailSerializer(payment)
-                return Response(
-                    {
-                        'message': 'Pago creado en estado pendiente',
-                        'data': detail_serializer.data
-                    },
-                    status=status.HTTP_201_CREATED
+                return created_response(
+                    data=detail_serializer.data,
+                    message='Pago creado en estado pendiente'
                 )
             
             # Procesar el pago con la pasarela
@@ -89,33 +94,25 @@ class PaymentViewSet(viewsets.ViewSet):
             
             if result['success']:
                 detail_serializer = PaymentDetailSerializer(result['payment'])
-                return Response(
-                    {
-                        'message': result['message'],
-                        'data': detail_serializer.data
-                    },
-                    status=status.HTTP_201_CREATED
+                return created_response(
+                    data=detail_serializer.data,
+                    message=result['message']
                 )
             else:
                 detail_serializer = PaymentDetailSerializer(result['payment'])
-                return Response(
-                    {
-                        'error': result['error'],
-                        'error_code': result.get('error_code'),
-                        'data': detail_serializer.data
-                    },
-                    status=status.HTTP_402_PAYMENT_REQUIRED
+                return error_response(
+                    error=result['error'],
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    error_code=result.get('error_code'),
+                    additional_data={'data': detail_serializer.data}
                 )
         
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al procesar el pago: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al procesar el pago: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     def list(self, request):
@@ -125,30 +122,24 @@ class PaymentViewSet(viewsets.ViewSet):
         GET /api/payments/
         Query params opcionales: status, from_date, to_date
         """
-        # Obtener filtros de query params
+        # Build filters from query params
         filters = {}
+        
         if request.query_params.get('status'):
             filters['status'] = request.query_params.get('status')
-        if request.query_params.get('from_date'):
-            try:
-                filters['from_date'] = datetime.fromisoformat(
-                    request.query_params.get('from_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de from_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.query_params.get('to_date'):
-            try:
-                filters['to_date'] = datetime.fromisoformat(
-                    request.query_params.get('to_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de to_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        
+        # Parse date parameters using utility
+        from_date, error = parse_datetime_param(request.query_params.get('from_date'), 'from_date')
+        if error:
+            return error
+        if from_date:
+            filters['from_date'] = from_date
+        
+        to_date, error = parse_datetime_param(request.query_params.get('to_date'), 'to_date')
+        if error:
+            return error
+        if to_date:
+            filters['to_date'] = to_date
         
         try:
             payments = self.payment_service.get_user_payments(
@@ -156,17 +147,14 @@ class PaymentViewSet(viewsets.ViewSet):
                 filters
             )
             serializer = PaymentListSerializer(payments, many=True)
-            return Response(
-                {
-                    'count': payments.count(),
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            return success_response(data={
+                'count': payments.count(),
+                'payments': serializer.data
+            })
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener pagos: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error retrieving payments: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     def retrieve(self, request, pk=None):
@@ -183,17 +171,14 @@ class PaymentViewSet(viewsets.ViewSet):
                 # Si no es el dueño, verificar si es el propietario de la reservación
                 reservation = self.payment_service._get_reservation(payment.reservation_id)
                 if not reservation or str(reservation['owner_id']) != str(request.user.id):
-                    return Response(
-                        {'error': 'No tienes permiso para ver este pago'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
+                    return permission_denied_response('No tienes permiso para ver este pago')
             
             serializer = PaymentDetailSerializer(payment)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            return success_response(data=serializer.data)
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener el pago: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener el pago: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['post'], url_path='verify')
@@ -208,37 +193,27 @@ class PaymentViewSet(viewsets.ViewSet):
             
             # Verificar permisos
             if payment.user != request.user:
-                return Response(
-                    {'error': 'No tienes permiso para verificar este pago'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return permission_denied_response('No tienes permiso para verificar este pago')
             
             result = self.payment_service.verify_payment(payment)
             
             if result['success']:
                 serializer = PaymentDetailSerializer(result['payment'])
-                return Response(
-                    {
-                        'message': 'Estado del pago verificado',
+                return success_response(
+                    data={
                         'gateway_status': result.get('status'),
-                        'data': serializer.data
+                        'payment': serializer.data
                     },
-                    status=status.HTTP_200_OK
+                    message='Estado del pago verificado'
                 )
             else:
-                return Response(
-                    {'error': result.get('error', 'Error al verificar el pago')},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return error_response(result.get('error', 'Error al verificar el pago'))
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al verificar el pago: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al verificar el pago: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['get'], url_path='transactions')
@@ -255,25 +230,19 @@ class PaymentViewSet(viewsets.ViewSet):
             if payment.user != request.user:
                 reservation = self.payment_service._get_reservation(payment.reservation_id)
                 if not reservation or str(reservation['owner_id']) != str(request.user.id):
-                    return Response(
-                        {'error': 'No tienes permiso para ver las transacciones'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
+                    return permission_denied_response('No tienes permiso para ver las transacciones')
             
             transactions = payment.transactions.all().order_by('-created_at')
             serializer = TransactionSerializer(transactions, many=True)
             
-            return Response(
-                {
-                    'count': transactions.count(),
-                    'data': serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            return success_response(data={
+                'count': transactions.count(),
+                'transactions': serializer.data
+            })
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener transacciones: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener transacciones: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=True, methods=['post'], url_path='refund')
@@ -288,11 +257,13 @@ class PaymentViewSet(viewsets.ViewSet):
         }
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden procesar reembolsos'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user, 
+            'owner', 
+            'Solo los propietarios pueden procesar reembolsos'
+        )
+        if permission_error:
+            return permission_error
         
         try:
             payment = get_object_or_404(Payment, pk=pk)
@@ -300,15 +271,12 @@ class PaymentViewSet(viewsets.ViewSet):
             # Verificar que el propietario sea dueño de la reservación
             reservation = self.payment_service._get_reservation(payment.reservation_id)
             if not reservation or str(reservation['owner_id']) != str(request.user.id):
-                return Response(
-                    {'error': 'No tienes permiso para reembolsar este pago'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return permission_denied_response('No tienes permiso para reembolsar este pago')
             
             # Validar datos del reembolso
             serializer = PaymentRefundSerializer(data=request.data)
             if not serializer.is_valid():
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                return validation_error_response(serializer.errors)
             
             # Procesar reembolso
             result = self.payment_service.refund_payment(
@@ -319,28 +287,19 @@ class PaymentViewSet(viewsets.ViewSet):
             
             if result['success']:
                 detail_serializer = PaymentDetailSerializer(result['payment'])
-                return Response(
-                    {
-                        'message': result['message'],
-                        'data': detail_serializer.data
-                    },
-                    status=status.HTTP_200_OK
+                return success_response(
+                    data=detail_serializer.data,
+                    message=result['message']
                 )
             else:
-                return Response(
-                    {'error': result.get('error', 'Error al procesar el reembolso')},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                return error_response(result.get('error', 'Error al procesar el reembolso'))
         
         except ValueError as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return error_response(str(e))
         except Exception as e:
-            return Response(
-                {'error': f'Error al procesar el reembolso: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al procesar el reembolso: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['get'], url_path='my-earnings')
@@ -352,34 +311,28 @@ class PaymentViewSet(viewsets.ViewSet):
         Query params opcionales: from_date, to_date
         """
         # Validar que el usuario sea propietario
-        if not hasattr(request.user, 'user_type') or request.user.user_type != 'owner':
-            return Response(
-                {'error': 'Solo los propietarios pueden ver ganancias'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        permission_error = check_user_type(
+            request.user,
+            'owner',
+            'Solo los propietarios pueden ver ganancias'
+        )
+        if permission_error:
+            return permission_error
         
-        # Obtener filtros de query params
+        # Parsear filtros de fechas
         filters = {}
-        if request.query_params.get('from_date'):
-            try:
-                filters['from_date'] = datetime.fromisoformat(
-                    request.query_params.get('from_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de from_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.query_params.get('to_date'):
-            try:
-                filters['to_date'] = datetime.fromisoformat(
-                    request.query_params.get('to_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de to_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        
+        from_date, error = parse_datetime_param(request.query_params.get('from_date'), 'from_date')
+        if error:
+            return error
+        if from_date:
+            filters['from_date'] = from_date
+        
+        to_date, error = parse_datetime_param(request.query_params.get('to_date'), 'to_date')
+        if error:
+            return error
+        if to_date:
+            filters['to_date'] = to_date
         
         try:
             earnings = self.payment_service.get_owner_earnings(
@@ -387,11 +340,11 @@ class PaymentViewSet(viewsets.ViewSet):
                 filters
             )
             
-            return Response(earnings, status=status.HTTP_200_OK)
+            return success_response(data=earnings)
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener ganancias: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener ganancias: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['get'], url_path='statistics')
@@ -402,28 +355,20 @@ class PaymentViewSet(viewsets.ViewSet):
         GET /api/payments/statistics/
         Query params opcionales: from_date, to_date
         """
-        # Obtener filtros de query params
+        # Parsear filtros de fechas
         filters = {}
-        if request.query_params.get('from_date'):
-            try:
-                filters['from_date'] = datetime.fromisoformat(
-                    request.query_params.get('from_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de from_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        if request.query_params.get('to_date'):
-            try:
-                filters['to_date'] = datetime.fromisoformat(
-                    request.query_params.get('to_date')
-                )
-            except ValueError:
-                return Response(
-                    {'error': 'Formato de to_date inválido. Use ISO 8601.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        
+        from_date, error = parse_datetime_param(request.query_params.get('from_date'), 'from_date')
+        if error:
+            return error
+        if from_date:
+            filters['from_date'] = from_date
+        
+        to_date, error = parse_datetime_param(request.query_params.get('to_date'), 'to_date')
+        if error:
+            return error
+        if to_date:
+            filters['to_date'] = to_date
         
         try:
             stats = self.payment_service.get_payment_statistics(
@@ -432,9 +377,9 @@ class PaymentViewSet(viewsets.ViewSet):
             )
             
             serializer = PaymentStatisticsSerializer(stats)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            return success_response(data=serializer.data)
         except Exception as e:
-            return Response(
-                {'error': f'Error al obtener estadísticas: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return error_response(
+                f'Error al obtener estadísticas: {str(e)}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
