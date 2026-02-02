@@ -38,19 +38,32 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             attrs (dict): Atributos de entrada validados.
             
         Returns:
-            dict: Datos de autenticación con token de acceso e información del usuario.
+            dict: Datos de autenticación con token de acceso e información completa del usuario.
         """
         data = super().validate(attrs)
         self.refresh_token = data["refresh"]
+        
+        # Construir full_name desde first_name y last_name
+        full_name = ""
+        if self.user.first_name and self.user.last_name:
+            full_name = f"{self.user.first_name} {self.user.last_name}".strip()
+        elif self.user.first_name:
+            full_name = self.user.first_name
+        elif self.user.last_name:
+            full_name = self.user.last_name
+        else:
+            full_name = self.user.username
 
         return {
             "access": data["access"],
             "user": {
-                "id": self.user.id,
+                "id": str(self.user.id),
                 "username": self.user.username,
                 "email": self.user.email,
-                "first_name": self.user.first_name,
-                "last_name": self.user.last_name,
+                "full_name": full_name,
+                "user_type": self.user.user_type,
+                "is_active": self.user.is_active,
+                "date_joined": self.user.date_joined.isoformat(),
             },
         }
 

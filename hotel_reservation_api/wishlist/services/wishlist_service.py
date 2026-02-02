@@ -14,7 +14,7 @@ class WishlistService:
     """
     
     def __init__(self):
-        self.db = MongoDBConnection().get_database()
+        self.db = MongoDBConnection().db
         self.wishlist_collection = self.db.wishlist
         self.hotels_collection = self.db.hotels
         

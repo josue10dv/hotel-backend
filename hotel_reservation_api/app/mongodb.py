@@ -97,3 +97,29 @@ def get_mongo_db():
         collection.insert_one({'name': 'example'})
     """
     return mongo_db.db
+
+
+# Collection helpers
+def get_hotels_collection():
+    """Get hotels collection."""
+    return get_mongo_db()['hotels']
+
+
+def get_reservations_collection():
+    """Get reservations collection."""
+    return get_mongo_db()['reservations']
+
+
+def get_reviews_collection():
+    """Get reviews collection."""
+    return get_mongo_db()['reviews']
+
+
+def get_wishlist_collection():
+    """Get wishlist collection."""
+    return get_mongo_db()['wishlist']
+
+
+def get_notifications_collection():
+    """Get notifications collection."""
+    return get_mongo_db()['notifications']
