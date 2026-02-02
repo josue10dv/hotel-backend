@@ -40,7 +40,7 @@ class MongoDBConnection:
             password_encoded = quote_plus(password)
             connection_string = (
                 f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                f"{db_name}?authSource=admin"
+                f"{db_name}?authSource={db_name}"
             )
         else:
             # Without authentication (local development)
@@ -52,6 +52,10 @@ class MongoDBConnection:
     @property
     def db(self):
         """Get the MongoDB database instance."""
+        return self._db
+    
+    def get_db(self):
+        """Get the MongoDB database instance (method version)."""
         return self._db
 
     def close(self):
