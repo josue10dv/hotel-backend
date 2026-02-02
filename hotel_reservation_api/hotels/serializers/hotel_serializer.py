@@ -7,17 +7,30 @@ from hotels.schemas.hotel_schema import HotelSchema
 
 
 class CoordinatesSerializer(serializers.Serializer):
-    """Serializer para coordenadas geográficas."""
+    """Serializer para coordenadas geográficas compatible con Google Maps."""
     lat = serializers.FloatField(
         min_value=-90, 
         max_value=90,
-        help_text="Latitud (-90 a 90)"
+        help_text="Latitud (-90 a 90). Ejemplo: -34.9011 para Montevideo"
     )
     lng = serializers.FloatField(
         min_value=-180, 
         max_value=180,
-        help_text="Longitud (-180 a 180)"
+        help_text="Longitud (-180 a 180). Ejemplo: -56.1645 para Montevideo"
     )
+    
+    def validate(self, data):
+        """Validación adicional de coordenadas."""
+        lat = data.get('lat')
+        lng = data.get('lng')
+        
+        # Validar que no sean exactamente 0, 0 (indica coordenadas no establecidas)
+        if lat == 0.0 and lng == 0.0:
+            raise serializers.ValidationError(
+                "Las coordenadas (0.0, 0.0) no son válidas. Por favor proporciona la ubicación real."
+            )
+        
+        return data
 
 
 class AddressSerializer(serializers.Serializer):
@@ -83,6 +96,7 @@ class HotelSerializer(serializers.Serializer):
     """
     Serializer completo para Hotel.
     Usado para lectura y respuesta detallada.
+    Optimizado para Google Maps con campo 'location' de acceso directo.
     """
     id = serializers.CharField(read_only=True, source='_id')
     owner_id = serializers.UUIDField()
@@ -93,6 +107,10 @@ class HotelSerializer(serializers.Serializer):
         default="hotel"
     )
     address = AddressSerializer()
+    # Campo de acceso directo a coordenadas para Google Maps
+    location = serializers.SerializerMethodField(
+        help_text="Coordenadas directas {lat, lng} para Google Maps"
+    )
     rooms = RoomSerializer(many=True, required=False, default=list)
     amenities = serializers.ListField(
         child=serializers.CharField(max_length=100),
@@ -117,6 +135,25 @@ class HotelSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
 
+    def get_location(self, obj):
+        """
+        Extrae las coordenadas del hotel para fácil uso con Google Maps.
+        Retorna las coordenadas en formato {lat, lng} o None si no están disponibles.
+        """
+        address = obj.get('address', {})
+        coordinates = address.get('coordinates', {})
+        
+        lat = coordinates.get('lat')
+        lng = coordinates.get('lng')
+        
+        # Solo retornar si las coordenadas son válidas
+        if lat is not None and lng is not None and not (lat == 0.0 and lng == 0.0):
+            return {
+                'lat': lat,
+                'lng': lng
+            }
+        return None
+
     def validate_property_type(self, value):
         """Valida el tipo de propiedad."""
         if not HotelSchema.validate_property_type(value):
@@ -130,6 +167,7 @@ class HotelListSerializer(serializers.Serializer):
     """
     Serializer resumido para listado de hoteles.
     Solo incluye información básica para mejorar rendimiento.
+    Optimizado para mostrar múltiples hoteles en Google Maps.
     """
     id = serializers.CharField(read_only=True, source='_id')
     owner_id = serializers.UUIDField()
@@ -137,6 +175,10 @@ class HotelListSerializer(serializers.Serializer):
     description = serializers.CharField()
     property_type = serializers.CharField()
     address = AddressSerializer()
+    # Campo de acceso directo a coordenadas para Google Maps
+    location = serializers.SerializerMethodField(
+        help_text="Coordenadas directas {lat, lng} para marcadores en el mapa"
+    )
     images = serializers.ListField(child=serializers.URLField())
     rating = serializers.FloatField()
     total_reviews = serializers.IntegerField()
@@ -149,6 +191,25 @@ class HotelListSerializer(serializers.Serializer):
         required=False,
         read_only=True
     )
+    
+    def get_location(self, obj):
+        """
+        Extrae las coordenadas del hotel para Google Maps.
+        Formato optimizado para renderizado de múltiples marcadores.
+        """
+        address = obj.get('address', {})
+        coordinates = address.get('coordinates', {})
+        
+        lat = coordinates.get('lat')
+        lng = coordinates.get('lng')
+        
+        # Solo retornar si las coordenadas son válidas
+        if lat is not None and lng is not None and not (lat == 0.0 and lng == 0.0):
+            return {
+                'lat': lat,
+                'lng': lng
+            }
+        return None
 
 
 class HotelCreateSerializer(serializers.Serializer):

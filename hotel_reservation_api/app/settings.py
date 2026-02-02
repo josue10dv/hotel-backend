@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     "users",
     "reservations",
     "payments",
+    "reviews",
+    "wishlist",
     "rest_framework_simplejwt.token_blacklist",
 ]
 

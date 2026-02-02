@@ -4,6 +4,7 @@ Validan y transforman datos de entrada/salida para la API.
 """
 from rest_framework import serializers
 from datetime import datetime, timedelta
+from django.utils import timezone
 
 
 class GuestDetailsSerializer(serializers.Serializer):
@@ -26,8 +27,11 @@ class ReservationCreateSerializer(serializers.Serializer):
     
     def validate_check_in(self, value):
         """Valida que la fecha de entrada no sea en el pasado."""
-        now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if value.replace(hour=0, minute=0, second=0, microsecond=0) < now:
+        # Usar timezone.now() para obtener datetime aware compatible con value
+        now = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Asegurar que value también sea aware para la comparación
+        value_date = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        if value_date < now:
             raise serializers.ValidationError(
                 "La fecha de entrada no puede ser en el pasado"
             )
@@ -44,7 +48,8 @@ class ReservationCreateSerializer(serializers.Serializer):
             })
         
         # Validar que no sea más de 1 año en el futuro
-        max_date = datetime.now() + timedelta(days=365)
+        # Usar timezone.now() para datetime aware
+        max_date = timezone.now() + timedelta(days=365)
         if check_in > max_date:
             raise serializers.ValidationError({
                 'check_in': 'No se pueden hacer reservaciones con más de un año de anticipación'
@@ -126,8 +131,11 @@ class CheckAvailabilitySerializer(serializers.Serializer):
     
     def validate_check_in(self, value):
         """Valida que la fecha de entrada no sea en el pasado."""
-        now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        if value.replace(hour=0, minute=0, second=0, microsecond=0) < now:
+        # Usar timezone.now() para obtener datetime aware compatible con value
+        now = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # Asegurar que value también sea aware para la comparación
+        value_date = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        if value_date < now:
             raise serializers.ValidationError(
                 "La fecha de entrada no puede ser en el pasado"
             )
