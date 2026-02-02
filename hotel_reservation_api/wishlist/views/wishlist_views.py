@@ -37,8 +37,7 @@ class WishlistView(APIView):
             )
         except Exception as e:
             return error_response(
-                message="Error al obtener wishlist",
-                errors=str(e),
+                error=f"Error al obtener wishlist: {str(e)}",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -58,9 +57,9 @@ class AddToWishlistView(APIView):
         
         if not serializer.is_valid():
             return error_response(
-                message="Datos inválidos",
-                errors=serializer.errors,
-                status_code=status.HTTP_400_BAD_REQUEST
+                error="Datos inválidos",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                additional_data={"errors": serializer.errors}
             )
         
         try:
@@ -77,13 +76,12 @@ class AddToWishlistView(APIView):
             )
         except ValueError as e:
             return error_response(
-                message=str(e),
+                error=str(e),
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             return error_response(
-                message="Error al agregar hotel a wishlist",
-                errors=str(e),
+                error=f"Error al agregar hotel a wishlist: {str(e)}",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -103,7 +101,7 @@ class RemoveFromWishlistView(APIView):
             ObjectId(hotel_id)
         except Exception:
             return error_response(
-                message="ID de hotel inválido",
+                error="ID de hotel inválido",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
@@ -119,13 +117,12 @@ class RemoveFromWishlistView(APIView):
             )
         except ValueError as e:
             return error_response(
-                message=str(e),
+                error=str(e),
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             return error_response(
-                message="Error al eliminar hotel de wishlist",
-                errors=str(e),
+                error=f"Error al eliminar hotel de wishlist: {str(e)}",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -145,7 +142,7 @@ class CheckWishlistView(APIView):
             ObjectId(hotel_id)
         except Exception:
             return error_response(
-                message="ID de hotel inválido",
+                error="ID de hotel inválido",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         
@@ -164,8 +161,7 @@ class CheckWishlistView(APIView):
             )
         except Exception as e:
             return error_response(
-                message="Error al verificar wishlist",
-                errors=str(e),
+                error=f"Error al verificar wishlist: {str(e)}",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -192,7 +188,6 @@ class ClearWishlistView(APIView):
             )
         except Exception as e:
             return error_response(
-                message="Error al limpiar wishlist",
-                errors=str(e),
+                error=f"Error al limpiar wishlist: {str(e)}",
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

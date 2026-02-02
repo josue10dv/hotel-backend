@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from bson import ObjectId
 from bson.errors import InvalidId
+from django.utils import timezone
 from app.mongodb import mongo_db
 from reservations.schemas.reservation_schema import ReservationSchema
 import uuid
@@ -41,26 +42,58 @@ class ReservationService:
         if not hotel:
             raise ValueError("Hotel no encontrado")
         
-        room = self._get_room(hotel, reservation_data['room_id'])
-        if not room:
-            raise ValueError("Habitación no encontrada")
-        
-        # Validar fechas
+        # Validar fechas primero
         check_in = reservation_data['check_in']
         check_out = reservation_data['check_out']
         self._validate_dates(check_in, check_out)
         
-        # Validar disponibilidad
-        if not self.check_availability(
-            reservation_data['hotel_id'],
-            reservation_data['room_id'],
-            check_in,
-            check_out
-        ):
-            raise ValueError("La habitación no está disponible en las fechas seleccionadas")
+        # Verificar si el hotel tiene habitaciones registradas
+        has_rooms = hotel.get('rooms') and len(hotel.get('rooms', [])) > 0
+        
+        # Si no se proporciona room_id
+        room_id = reservation_data.get('room_id')
+        room = None
+        
+        if not room_id:
+            if has_rooms:
+                # Buscar primera habitación disponible
+                room = self._find_available_room(hotel, check_in, check_out, reservation_data.get('number_of_guests', 1))
+                if room:
+                    room_id = room['room_id']
+            
+            # Si no hay habitaciones o no se encontró disponible, usar habitación genérica
+            if not room_id:
+                room_id = "general"
+                room = {
+                    'room_id': 'general',
+                    'price_per_night': 0.0,
+                    'capacity': 10  # Capacidad por defecto
+                }
+        else:
+            # Si se proporciona room_id específico
+            if has_rooms:
+                room = self._get_room(hotel, room_id)
+                if not room:
+                    raise ValueError("Habitación no encontrada")
+                
+                # Validar disponibilidad de la habitación específica
+                if not self.check_availability(
+                    reservation_data['hotel_id'],
+                    room_id,
+                    check_in,
+                    check_out
+                ):
+                    raise ValueError("La habitación no está disponible en las fechas seleccionadas")
+            else:
+                # Hotel sin habitaciones, usar configuración genérica
+                room = {
+                    'room_id': room_id,
+                    'price_per_night': 0.0,
+                    'capacity': 10
+                }
         
         # Validar capacidad
-        if reservation_data.get('number_of_guests', 1) > room.get('capacity', 1):
+        if reservation_data.get('number_of_guests', 1) > room.get('capacity', 10):
             raise ValueError(f"La habitación tiene capacidad máxima de {room['capacity']} huéspedes")
         
         # Calcular noches y precio
@@ -72,7 +105,7 @@ class ReservationService:
         reservation_document = ReservationSchema.get_default_document()
         reservation_document.update({
             'hotel_id': ObjectId(reservation_data['hotel_id']),
-            'room_id': reservation_data['room_id'],
+            'room_id': room_id,
             'guest_id': str(guest_id),
             'owner_id': str(hotel['owner_id']),
             'check_in': check_in,
@@ -318,9 +351,23 @@ class ReservationService:
                 return room
         return None
     
+    def _find_available_room(self, hotel: Dict, check_in: datetime, check_out: datetime, number_of_guests: int) -> Optional[Dict]:
+        """Busca la primera habitación disponible que cumpla con los requisitos."""
+        rooms = hotel.get('rooms', [])
+        hotel_id = str(hotel['_id'])
+        
+        for room in rooms:
+            # Verificar que la habitación esté disponible y tenga capacidad suficiente
+            if room.get('available', True) and room.get('capacity', 1) >= number_of_guests:
+                room_id = room.get('room_id')
+                if self.check_availability(hotel_id, room_id, check_in, check_out):
+                    return room
+        
+        return None
+    
     def _validate_dates(self, check_in: datetime, check_out: datetime):
         """Valida que las fechas sean correctas."""
-        now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        now = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
         
         if check_in < now:
             raise ValueError("La fecha de entrada no puede ser en el pasado")

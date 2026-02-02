@@ -11,12 +11,14 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     Valida y crea usuarios con nombre de usuario, correo electrónico y contraseña.
     Incluye validación de unicidad y confirmación de contraseña.
+    Acepta full_name opcional que se divide en first_name y last_name.
     
     Campos:
         username (str): Nombre de usuario único.
         email (EmailField): Dirección de correo electrónico única.
         password (str): Contraseña que cumple con los requisitos de validación.
         password_confirm (str): Confirmación de contraseña (debe coincidir con password).
+        full_name (str): Nombre completo (opcional, se divide automáticamente).
         user_type (str): Tipo de cuenta de usuario.
     """
 
@@ -30,10 +32,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         write_only=True, required=True, style={"input_type": "password"}
     )
     email = serializers.EmailField(required=True)
+    full_name = serializers.CharField(required=False, write_only=True)
 
     class Meta:
         model = User
-        fields = ("username", "email", "password", "password_confirm", "user_type")
+        fields = ("username", "email", "password", "password_confirm", "full_name", "user_type")
         extra_kwargs = {"username": {"required": True}, "email": {"required": True}}
 
     def validate_email(self, value):
@@ -98,6 +101,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         Crea y retorna el usuario creado con sus credenciales encriptadas.
         
         Usa create_user() para asegurar el hash correcto de la contraseña.
+        Maneja la división de full_name en first_name y last_name.
         
         Args:
             validated_data (dict): Datos validados del usuario.
@@ -106,11 +110,27 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             User: Instancia del usuario creado.
         """
         validated_data.pop("password_confirm")
+        
+        # Extraer user_type si está presente
+        user_type = validated_data.pop("user_type", "guest")
+        
+        # Manejar full_name si está presente
+        full_name = validated_data.pop("full_name", None)
+        first_name = ""
+        last_name = ""
+        
+        if full_name:
+            parts = full_name.strip().split(maxsplit=1)
+            first_name = parts[0] if len(parts) > 0 else ''
+            last_name = parts[1] if len(parts) > 1 else ''
 
         user = User.objects.create_user(
             username=validated_data["username"],
             email=validated_data["email"],
             password=validated_data["password"],
+            user_type=user_type,
+            first_name=first_name,
+            last_name=last_name,
         )
 
         return user
@@ -121,18 +141,21 @@ class UserSerializer(serializers.ModelSerializer):
     Serializer para listar y obtener detalles de usuarios.
     
     Excluye información sensible como contraseñas.
-    Campos de solo lectura: id, date_joined.
+    Incluye full_name como campo calculado que combina first_name y last_name.
     
     Campos:
-        id (UUID): Identificador único del usuario (solo lectura).
-        username (str): Nombre de usuario.
-        email (EmailField): Dirección de correo electrónico.
-        first_name (str): Nombre.
-        last_name (str): Apellido.
-        user_type (str): Tipo de cuenta.
-        date_joined (DateTime): Fecha de registro (solo lectura).
+        id (str): Identificador único del usuario (UUID convertido a string).
+        username (str): Nombre de usuario único para login.
+        email (str): Correo electrónico para login alternativo y comunicaciones.
+        full_name (str): Nombre completo del usuario (first_name + last_name).
+        user_type (str): Tipo de cuenta del usuario ('guest' | 'owner').
         is_active (bool): Estado activo de la cuenta.
+        date_joined (str): Fecha de registro en formato ISO.
     """
+    
+    full_name = serializers.SerializerMethodField(
+        help_text="Nombre completo del usuario"
+    )
 
     class Meta:
         model = User
@@ -140,35 +163,60 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "username",
             "email",
-            "first_name",
-            "last_name",
+            "full_name",
             "user_type",
-            "date_joined",
             "is_active",
+            "date_joined",
         )
         read_only_fields = ("id", "date_joined")
+    
+    def get_full_name(self, obj):
+        """
+        Retorna el nombre completo del usuario combinando first_name y last_name.
+        Si no hay nombre, retorna el username.
+        """
+        if obj.first_name and obj.last_name:
+            return f"{obj.first_name} {obj.last_name}".strip()
+        elif obj.first_name:
+            return obj.first_name
+        elif obj.last_name:
+            return obj.last_name
+        return obj.username
+    
+    def to_representation(self, instance):
+        """
+        Convierte el UUID a string y asegura el formato correcto.
+        """
+        data = super().to_representation(instance)
+        
+        # Asegurar que id sea string
+        if data.get('id'):
+            data['id'] = str(data['id'])
+        
+        return data
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer para actualizar información del usuario.
     
-    Permite actualizar: nombre de usuario, correo electrónico, nombre, apellido.
+    Permite actualizar: nombre de usuario, correo electrónico, nombre completo.
+    Acepta full_name como campo de entrada y lo separa en first_name y last_name.
     Valida la unicidad del correo electrónico y nombre de usuario excluyendo al usuario actual.
     
     Campos:
         username (str): Nombre de usuario.
-        email (EmailField): Dirección de correo electrónico.
-        first_name (str): Nombre.
-        last_name (str): Apellido.
+        email (str): Dirección de correo electrónico.
+        full_name (str): Nombre completo (se divide automáticamente).
         user_type (str): Tipo de cuenta.
     """
 
     email = serializers.EmailField(required=False)
+    full_name = serializers.CharField(required=False, write_only=True)
 
     class Meta:
         model = User
-        fields = ("username", "email", "first_name", "last_name", "user_type")
+        fields = ("username", "email", "full_name", "user_type")
 
     def validate_email(self, value):
         """
@@ -191,6 +239,24 @@ class UserUpdateSerializer(serializers.ModelSerializer):
                 "Ya existe un usuario con este nombre de usuario."
             )
         return value
+    
+    def update(self, instance, validated_data):
+        """
+        Actualiza el usuario, manejando la conversión de full_name a first_name y last_name.
+        """
+        # Si se proporciona full_name, dividirlo en first_name y last_name
+        full_name = validated_data.pop('full_name', None)
+        if full_name:
+            parts = full_name.strip().split(maxsplit=1)
+            instance.first_name = parts[0] if len(parts) > 0 else ''
+            instance.last_name = parts[1] if len(parts) > 1 else ''
+        
+        # Actualizar el resto de campos
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save()
+        return instance
 
 
 class ChangePasswordSerializer(serializers.Serializer):

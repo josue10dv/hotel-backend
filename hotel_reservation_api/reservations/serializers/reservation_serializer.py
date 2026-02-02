@@ -18,7 +18,7 @@ class GuestDetailsSerializer(serializers.Serializer):
 class ReservationCreateSerializer(serializers.Serializer):
     """Serializer para crear una nueva reservación."""
     hotel_id = serializers.CharField(required=True)
-    room_id = serializers.CharField(required=True)
+    room_id = serializers.CharField(required=False, allow_blank=True, help_text="Opcional: ID de habitación específica. Si no se proporciona, se asignará la primera disponible.")
     check_in = serializers.DateTimeField(required=True)
     check_out = serializers.DateTimeField(required=True)
     number_of_guests = serializers.IntegerField(required=True, min_value=1)

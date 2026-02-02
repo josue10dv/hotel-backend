@@ -40,9 +40,14 @@ class MongoDBConnection:
         if username and password:
             username_encoded = quote_plus(username)
             password_encoded = quote_plus(password)
+            
+            # Para MongoDB local, authSource es 'admin' por defecto
+            # Para Atlas o si se especifica, usar el db_name
+            auth_source = 'admin' if not is_atlas else db_name
+            
             connection_string = (
                 f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                f"{db_name}?authSource={db_name}"
+                f"{db_name}?authSource={auth_source}"
             )
         else:
             if is_atlas:
@@ -88,3 +93,29 @@ def get_mongo_db():
         collection.insert_one({'name': 'example'})
     """
     return mongo_db.db
+
+
+# Collection helpers
+def get_hotels_collection():
+    """Get hotels collection."""
+    return get_mongo_db()['hotels']
+
+
+def get_reservations_collection():
+    """Get reservations collection."""
+    return get_mongo_db()['reservations']
+
+
+def get_reviews_collection():
+    """Get reviews collection."""
+    return get_mongo_db()['reviews']
+
+
+def get_wishlist_collection():
+    """Get wishlist collection."""
+    return get_mongo_db()['wishlist']
+
+
+def get_notifications_collection():
+    """Get notifications collection."""
+    return get_mongo_db()['notifications']

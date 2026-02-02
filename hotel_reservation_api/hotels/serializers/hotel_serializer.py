@@ -47,7 +47,7 @@ class RoomSerializer(serializers.Serializer):
     """Serializer para habitaciones del hotel."""
     room_id = serializers.CharField(read_only=True)
     name = serializers.CharField(max_length=200)
-    description = serializers.CharField(allow_blank=True, required=False)
+    description = serializers.CharField(allow_blank=True, required=False, default='')
     type = serializers.ChoiceField(
         choices=HotelSchema.ROOM_TYPES,
         default="double"
@@ -69,27 +69,59 @@ class RoomSerializer(serializers.Serializer):
         required=False,
         default=list
     )
+    
+    def to_representation(self, instance):
+        """Asegura arrays vacíos en lugar de None."""
+        data = super().to_representation(instance)
+        if data.get('amenities') is None:
+            data['amenities'] = []
+        if data.get('images') is None:
+            data['images'] = []
+        if data.get('description') is None:
+            data['description'] = ''
+        return data
 
 
 class PoliciesSerializer(serializers.Serializer):
     """Serializer para políticas del hotel."""
-    check_in = serializers.CharField(max_length=10, default="14:00")
-    check_out = serializers.CharField(max_length=10, default="12:00")
-    cancellation = serializers.CharField(
-        default="Free cancellation up to 24 hours before check-in"
+    check_in_time = serializers.CharField(
+        max_length=10, 
+        default="15:00",
+        help_text="Hora de check-in en formato HH:MM"
     )
-    house_rules = serializers.ListField(
-        child=serializers.CharField(max_length=255),
-        required=False,
-        default=list
+    check_out_time = serializers.CharField(
+        max_length=10, 
+        default="12:00",
+        help_text="Hora de check-out en formato HH:MM"
+    )
+    cancellation_policy = serializers.CharField(
+        default="Cancelación gratuita hasta 24 horas antes",
+        help_text="Política de cancelación del hotel"
+    )
+    pet_policy = serializers.CharField(
+        default="No se aceptan mascotas",
+        help_text="Política de mascotas del hotel"
     )
 
 
 class ContactSerializer(serializers.Serializer):
     """Serializer para información de contacto."""
-    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    email = serializers.EmailField(required=False, allow_blank=True)
-    website = serializers.URLField(required=False, allow_blank=True)
+    phone = serializers.CharField(
+        max_length=20, 
+        required=False, 
+        allow_blank=True,
+        default=''
+    )
+    email = serializers.EmailField(
+        required=False, 
+        allow_blank=True,
+        default=''
+    )
+    website = serializers.URLField(
+        required=False, 
+        allow_blank=True,
+        default=''
+    )
 
 
 class HotelSerializer(serializers.Serializer):
@@ -153,6 +185,46 @@ class HotelSerializer(serializers.Serializer):
                 'lng': lng
             }
         return None
+    
+    def to_representation(self, instance):
+        """
+        Asegura que la respuesta tenga la estructura correcta esperada por el frontend.
+        Convierte None en arrays vacíos para campos de lista y proporciona valores por defecto.
+        """
+        data = super().to_representation(instance)
+        
+        # Asegurar que los arrays vacíos se devuelvan como [] en lugar de None
+        list_fields = ['rooms', 'amenities', 'services', 'images']
+        for field in list_fields:
+            if data.get(field) is None:
+                data[field] = []
+        
+        # Asegurar que policies tenga la estructura correcta
+        if not data.get('policies'):
+            data['policies'] = {
+                'check_in_time': '15:00',
+                'check_out_time': '12:00',
+                'cancellation_policy': 'Cancelación gratuita hasta 24 horas antes',
+                'pet_policy': 'No se aceptan mascotas'
+            }
+        
+        # Asegurar que contact tenga la estructura correcta
+        if not data.get('contact'):
+            data['contact'] = {
+                'phone': '',
+                'email': '',
+                'website': ''
+            }
+        
+        # Asegurar que total_reviews tenga un valor
+        if data.get('total_reviews') is None:
+            data['total_reviews'] = 0
+        
+        # Asegurar que is_active esté presente
+        if data.get('is_active') is None:
+            data['is_active'] = True
+        
+        return data
 
     def validate_property_type(self, value):
         """Valida el tipo de propiedad."""
@@ -178,6 +250,16 @@ class HotelListSerializer(serializers.Serializer):
     # Campo de acceso directo a coordenadas para Google Maps
     location = serializers.SerializerMethodField(
         help_text="Coordenadas directas {lat, lng} para marcadores en el mapa"
+    )
+    amenities = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        default=list
+    )
+    services = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        default=list
     )
     images = serializers.ListField(child=serializers.URLField())
     rating = serializers.FloatField()
@@ -210,12 +292,32 @@ class HotelListSerializer(serializers.Serializer):
                 'lng': lng
             }
         return None
+    
+    def to_representation(self, instance):
+        """
+        Asegura que los arrays vacíos se devuelvan como [] en lugar de None.
+        Coincide con la interfaz Hotel de TypeScript.
+        """
+        data = super().to_representation(instance)
+        
+        # Asegurar que los arrays vacíos se devuelvan como [] en lugar de None
+        list_fields = ['amenities', 'services', 'images']
+        for field in list_fields:
+            if data.get(field) is None:
+                data[field] = []
+        
+        # Asegurar que total_reviews tenga un valor
+        if data.get('total_reviews') is None:
+            data['total_reviews'] = 0
+        
+        return data
 
 
 class HotelCreateSerializer(serializers.Serializer):
     """
     Serializer para creación de hoteles.
     Campos requeridos para registrar un nuevo hotel.
+    Acepta imágenes como archivos (image_files) o URLs (images).
     """
     name = serializers.CharField(max_length=255)
     description = serializers.CharField()
@@ -223,24 +325,113 @@ class HotelCreateSerializer(serializers.Serializer):
         choices=HotelSchema.PROPERTY_TYPES,
         default="hotel"
     )
-    address = AddressSerializer()
-    amenities = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        required=False,
-        default=list
-    )
-    services = serializers.ListField(
-        child=serializers.CharField(max_length=100),
-        required=False,
-        default=list
-    )
+    address = serializers.JSONField()
+    amenities = serializers.JSONField(required=False, default=list)
+    services = serializers.JSONField(required=False, default=list)
+    # Soportar tanto URLs como archivos
     images = serializers.ListField(
         child=serializers.URLField(),
         required=False,
-        default=list
+        default=list,
+        write_only=True,
+        help_text="Lista de URLs de imágenes (opcional si se envían archivos)"
     )
-    policies = PoliciesSerializer(required=False)
-    contact = ContactSerializer(required=False)
+    image_files = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        write_only=True,
+        help_text="Lista de archivos de imagen para subir"
+    )
+    policies = serializers.JSONField(required=False)
+    contact = serializers.JSONField(required=False)
+    
+    def validate_address(self, value):
+        """Valida el campo address usando AddressSerializer."""
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("Invalid JSON format for address")
+        
+        address_serializer = AddressSerializer(data=value)
+        if not address_serializer.is_valid():
+            raise serializers.ValidationError(address_serializer.errors)
+        return address_serializer.validated_data
+    
+    def validate_amenities(self, value):
+        """Valida amenities."""
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("Invalid JSON format for amenities")
+        
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Amenities must be a list")
+        
+        # Validar cada amenity
+        for amenity in value:
+            if not isinstance(amenity, str):
+                raise serializers.ValidationError("Each amenity must be a string")
+            if len(amenity) > 100:
+                raise serializers.ValidationError(f"Amenity '{amenity}' exceeds 100 characters")
+        
+        return value
+    
+    def validate_services(self, value):
+        """Valida services."""
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("Invalid JSON format for services")
+        
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Services must be a list")
+        
+        # Validar cada service
+        for service in value:
+            if not isinstance(service, str):
+                raise serializers.ValidationError("Each service must be a string")
+            if len(service) > 100:
+                raise serializers.ValidationError(f"Service '{service}' exceeds 100 characters")
+        
+        return value
+    
+    def validate_policies(self, value):
+        """Valida policies."""
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("Invalid JSON format for policies")
+        
+        if value:
+            policies_serializer = PoliciesSerializer(data=value)
+            if not policies_serializer.is_valid():
+                raise serializers.ValidationError(policies_serializer.errors)
+            return policies_serializer.validated_data
+        return value
+    
+    def validate_contact(self, value):
+        """Valida contact."""
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("Invalid JSON format for contact")
+        
+        if value:
+            contact_serializer = ContactSerializer(data=value)
+            if not contact_serializer.is_valid():
+                raise serializers.ValidationError(contact_serializer.errors)
+            return contact_serializer.validated_data
+        return value
 
     def validate_property_type(self, value):
         """Valida el tipo de propiedad."""

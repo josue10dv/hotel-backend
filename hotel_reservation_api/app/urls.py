@@ -16,6 +16,8 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 from app.views import health_check, ready_check, live_check
 
 urlpatterns = [
@@ -32,4 +34,9 @@ urlpatterns = [
     path('api/', include('payments.urls')),
     path('api/', include('reviews.urls')),
     path('api/wishlist/', include('wishlist.urls')),
+    path('api/notifications/', include('notifications.urls')),
 ]
+
+# Servir archivos media en desarrollo
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

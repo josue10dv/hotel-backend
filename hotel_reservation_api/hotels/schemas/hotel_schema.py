@@ -47,10 +47,10 @@ class HotelSchema:
             "rating": 0.0,
             "total_reviews": 0,
             "policies": {
-                "check_in": "14:00",
-                "check_out": "12:00",
-                "cancellation": "Free cancellation up to 24 hours before check-in",
-                "house_rules": []
+                "check_in_time": "15:00",
+                "check_out_time": "12:00",
+                "cancellation_policy": "Cancelación gratuita hasta 24 horas antes",
+                "pet_policy": "No se aceptan mascotas"
             },
             "contact": {
                 "phone": "",
