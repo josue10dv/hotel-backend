@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_settings["DEBUG"]
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [host.strip() for host in env_settings["ALLOWED_HOSTS"].split(",") if host.strip()]
 
 
 # Custom User Model
