@@ -34,23 +34,32 @@ class MongoDBConnection:
         username = mongo_settings.get('username', '')
         password = mongo_settings.get('password', '')
         
-        # MongoDB Atlas usa mongodb+srv:// (sin puerto). Local usa mongodb://host:port
+        # MongoDB Atlas (.mongodb.net) usa mongodb+srv://. Docker/local usa mongodb://host:port
         is_atlas = '.mongodb.net' in host
-        
-        if username and password:
-            username_encoded = quote_plus(username)
-            password_encoded = quote_plus(password)
-            connection_string = (
-                f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                f"{db_name}?authSource={db_name}"
-            )
-        else:
-            if is_atlas:
+
+        if is_atlas:
+            # Atlas: mongodb+srv:// (sin puerto). Auth opcional.
+            if username and password:
+                username_encoded = quote_plus(username)
+                password_encoded = quote_plus(password)
+                connection_string = (
+                    f"mongodb+srv://{username_encoded}:{password_encoded}@{host}/"
+                    f"{db_name}?retryWrites=true&w=majority"
+                )
+            else:
                 connection_string = f"mongodb+srv://{host}/{db_name}?retryWrites=true&w=majority"
+        else:
+            # Docker / local: mongodb://host:port
+            if username and password:
+                username_encoded = quote_plus(username)
+                password_encoded = quote_plus(password)
+                connection_string = (
+                    f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
+                    f"{db_name}?authSource=admin"
+                )
             else:
                 connection_string = f"mongodb://{host}:{port}/"
-        
-        # En macOS/Atlas: usar certifi para que SSL encuentre los certificados (evita CERTIFICATE_VERIFY_FAILED)
+
         if is_atlas:
             self._client = MongoClient(connection_string, tlsCAFile=certifi.where())
         else:

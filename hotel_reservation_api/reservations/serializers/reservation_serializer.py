@@ -58,6 +58,67 @@ class ReservationCreateSerializer(serializers.Serializer):
         return data
 
 
+class CheckoutSerializer(serializers.Serializer):
+    """
+    Serializer para checkout: reservación + pago en un solo paso.
+    La reserva solo se guarda en backend cuando el pago es exitoso (paid).
+    """
+    # Campos de reservación (mismos que ReservationCreateSerializer)
+    hotel_id = serializers.CharField(required=True)
+    room_id = serializers.CharField(required=True)
+    check_in = serializers.DateTimeField(required=True)
+    check_out = serializers.DateTimeField(required=True)
+    number_of_guests = serializers.IntegerField(required=True, min_value=1)
+    guest_details = GuestDetailsSerializer(required=True)
+    special_requests = serializers.CharField(required=False, allow_blank=True)
+    # Campos de pago
+    payment_method = serializers.ChoiceField(
+        choices=[
+            ('credit_card', 'Tarjeta de Crédito'),
+            ('debit_card', 'Tarjeta de Débito'),
+            ('paypal', 'PayPal'),
+            ('bank_transfer', 'Transferencia Bancaria'),
+            ('other', 'Otro'),
+        ],
+        required=True,
+    )
+    payment_gateway = serializers.ChoiceField(
+        choices=[
+            ('stripe', 'Stripe'),
+            ('paypal', 'PayPal'),
+            ('mercadopago', 'MercadoPago'),
+            ('manual', 'Manual'),
+        ],
+        default='stripe',
+    )
+    payment_token = serializers.CharField(required=True, allow_blank=False)
+    save_payment_method = serializers.BooleanField(default=False, required=False)
+    metadata = serializers.JSONField(required=False)
+
+    def validate_check_in(self, value):
+        now = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        value_date = value.replace(hour=0, minute=0, second=0, microsecond=0)
+        if value_date < now:
+            raise serializers.ValidationError(
+                "La fecha de entrada no puede ser en el pasado"
+            )
+        return value
+
+    def validate(self, data):
+        check_in = data.get('check_in')
+        check_out = data.get('check_out')
+        if check_out <= check_in:
+            raise serializers.ValidationError({
+                'check_out': 'La fecha de salida debe ser posterior a la fecha de entrada'
+            })
+        max_date = timezone.now() + timedelta(days=365)
+        if check_in > max_date:
+            raise serializers.ValidationError({
+                'check_in': 'No se pueden hacer reservaciones con más de un año de anticipación'
+            })
+        return data
+
+
 class ReservationListSerializer(serializers.Serializer):
     """Serializer para listar reservaciones (vista simplificada)."""
     id = serializers.CharField(read_only=True)

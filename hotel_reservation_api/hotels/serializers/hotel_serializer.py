@@ -6,30 +6,53 @@ from rest_framework import serializers
 from hotels.schemas.hotel_schema import HotelSchema
 
 
+def _coordinates_to_lat_lng(coordinates):
+    """
+    Normaliza coordenadas desde MongoDB a formato { lat, lng }.
+    Acepta GeoJSON { type: "Point", coordinates: [lng, lat] } o { lat, lng }.
+    """
+    if not coordinates:
+        return None
+    if coordinates.get('type') == 'Point' and 'coordinates' in coordinates:
+        coords = coordinates['coordinates']
+        if len(coords) >= 2:
+            return {'lat': coords[1], 'lng': coords[0]}
+    if 'lat' in coordinates and 'lng' in coordinates:
+        return {'lat': coordinates['lat'], 'lng': coordinates['lng']}
+    return None
+
+
 class CoordinatesSerializer(serializers.Serializer):
     """Serializer para coordenadas geográficas compatible con Google Maps."""
     lat = serializers.FloatField(
-        min_value=-90, 
+        min_value=-90,
         max_value=90,
         help_text="Latitud (-90 a 90). Ejemplo: -34.9011 para Montevideo"
     )
     lng = serializers.FloatField(
-        min_value=-180, 
+        min_value=-180,
         max_value=180,
         help_text="Longitud (-180 a 180). Ejemplo: -56.1645 para Montevideo"
     )
-    
+
+    def to_representation(self, instance):
+        """Acepta GeoJSON (MongoDB 2dsphere) o { lat, lng }; siempre devuelve { lat, lng }."""
+        normalized = _coordinates_to_lat_lng(instance)
+        if normalized is None:
+            return {}
+        return super().to_representation(normalized)
+
     def validate(self, data):
         """Validación adicional de coordenadas."""
         lat = data.get('lat')
         lng = data.get('lng')
-        
+
         # Validar que no sean exactamente 0, 0 (indica coordenadas no establecidas)
         if lat == 0.0 and lng == 0.0:
             raise serializers.ValidationError(
                 "Las coordenadas (0.0, 0.0) no son válidas. Por favor proporciona la ubicación real."
             )
-        
+
         return data
 
 
@@ -138,21 +161,17 @@ class HotelSerializer(serializers.Serializer):
     def get_location(self, obj):
         """
         Extrae las coordenadas del hotel para fácil uso con Google Maps.
-        Retorna las coordenadas en formato {lat, lng} o None si no están disponibles.
+        Acepta GeoJSON o { lat, lng }; retorna { lat, lng } o None.
         """
         address = obj.get('address', {})
         coordinates = address.get('coordinates', {})
-        
-        lat = coordinates.get('lat')
-        lng = coordinates.get('lng')
-        
-        # Solo retornar si las coordenadas son válidas
-        if lat is not None and lng is not None and not (lat == 0.0 and lng == 0.0):
-            return {
-                'lat': lat,
-                'lng': lng
-            }
-        return None
+        normalized = _coordinates_to_lat_lng(coordinates)
+        if not normalized:
+            return None
+        lat, lng = normalized['lat'], normalized['lng']
+        if lat == 0.0 and lng == 0.0:
+            return None
+        return {'lat': lat, 'lng': lng}
 
     def validate_property_type(self, value):
         """Valida el tipo de propiedad."""
@@ -195,21 +214,17 @@ class HotelListSerializer(serializers.Serializer):
     def get_location(self, obj):
         """
         Extrae las coordenadas del hotel para Google Maps.
-        Formato optimizado para renderizado de múltiples marcadores.
+        Acepta GeoJSON o { lat, lng }; retorna { lat, lng } o None.
         """
         address = obj.get('address', {})
         coordinates = address.get('coordinates', {})
-        
-        lat = coordinates.get('lat')
-        lng = coordinates.get('lng')
-        
-        # Solo retornar si las coordenadas son válidas
-        if lat is not None and lng is not None and not (lat == 0.0 and lng == 0.0):
-            return {
-                'lat': lat,
-                'lng': lng
-            }
-        return None
+        normalized = _coordinates_to_lat_lng(coordinates)
+        if not normalized:
+            return None
+        lat, lng = normalized['lat'], normalized['lng']
+        if lat == 0.0 and lng == 0.0:
+            return None
+        return {'lat': lat, 'lng': lng}
 
 
 class HotelCreateSerializer(serializers.Serializer):

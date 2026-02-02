@@ -74,7 +74,39 @@ class PaymentService:
         )
         
         return payment
-    
+
+    def create_payment_for_checkout(
+        self,
+        reservation_id: str,
+        amount: Decimal,
+        currency: str,
+        user,
+        payment_data: Dict,
+    ) -> Payment:
+        """
+        Crea el registro de pago para checkout (reserva aún no existe en MongoDB).
+        Solo se usa cuando el flujo es: cobrar primero, crear reserva solo si pago OK.
+        """
+        if amount <= 0:
+            raise ValueError("El monto debe ser mayor a cero")
+        existing = Payment.objects.filter(
+            reservation_id=reservation_id,
+            status=Payment.PaymentStatus.COMPLETED,
+        ).first()
+        if existing:
+            raise ValueError("Ya existe un pago completado para esta reservación")
+        return Payment.objects.create(
+            reservation_id=reservation_id,
+            user=user,
+            amount=amount,
+            currency=currency or "USD",
+            status=Payment.PaymentStatus.PENDING,
+            payment_method=payment_data['payment_method'],
+            payment_gateway=payment_data['payment_gateway'],
+            description=f"Pago por reservación {reservation_id}",
+            metadata=payment_data.get('metadata') or {},
+        )
+
     def process_payment(self, payment: Payment, payment_token: str) -> Dict:
         """
         Procesa un pago con la pasarela correspondiente.

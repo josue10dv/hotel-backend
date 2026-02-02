@@ -8,12 +8,15 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from reservations.serializers import (
     ReservationCreateSerializer,
+    CheckoutSerializer,
     ReservationListSerializer,
     ReservationDetailSerializer,
     ReservationUpdateSerializer,
     CheckAvailabilitySerializer
 )
 from reservations.services.reservation_service import ReservationService
+from payments.services.payment_service import PaymentService
+from payments.serializers import PaymentDetailSerializer
 from app.utilities import (
     created_response,
     success_response,
@@ -52,44 +55,111 @@ class ReservationViewSet(viewsets.ViewSet):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.reservation_service = ReservationService()
-    
+        self.payment_service = PaymentService()
+
     def create(self, request):
         """
-        Crea una nueva reservación.
-        Solo usuarios tipo 'guest' pueden crear reservaciones.
-        
-        POST /api/reservations/
+        Crear reservación sin pago está deshabilitado.
+        La reserva solo se guarda en backend cuando el pago es exitoso.
+        Usar POST /api/reservations/checkout/ con datos de reserva + pago.
         """
-        # Validate user type using utility
+        return error_response(
+            'Las reservas se confirman solo al pagar. Use POST /api/reservations/checkout/ '
+            'con los datos de la reserva y del pago. Guarde la reserva sin pagar solo en su dispositivo.',
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    @action(detail=False, methods=['post'], url_path='checkout')
+    def checkout(self, request):
+        """
+        Checkout: valida reserva, cobra y solo entonces guarda la reserva en base.
+        Body: datos de reservación (hotel_id, room_id, check_in, check_out, number_of_guests,
+        guest_details, special_requests) + pago (payment_method, payment_gateway, payment_token, ...).
+        """
         permission_error = check_user_type(
-            request.user, 
-            'guest', 
-            'Only guests can create reservations'
+            request.user,
+            'guest',
+            'Solo los huéspedes pueden realizar checkout'
         )
         if permission_error:
             return permission_error
-        
-        serializer = ReservationCreateSerializer(data=request.data)
-        
+
+        serializer = CheckoutSerializer(data=request.data)
         if not serializer.is_valid():
             return validation_error_response(serializer.errors)
-        
+
+        data = serializer.validated_data
+        reservation_data = {
+            'hotel_id': data['hotel_id'],
+            'room_id': data['room_id'],
+            'check_in': data['check_in'],
+            'check_out': data['check_out'],
+            'number_of_guests': data['number_of_guests'],
+            'guest_details': data['guest_details'],
+            'special_requests': data.get('special_requests', ''),
+        }
+        payment_data = {
+            'payment_method': data['payment_method'],
+            'payment_gateway': data.get('payment_gateway', 'stripe'),
+            'payment_token': data['payment_token'],
+            'save_payment_method': data.get('save_payment_method', False),
+            'metadata': data.get('metadata'),
+        }
+
         try:
-            reservation = self.reservation_service.create_reservation(
-                serializer.validated_data,
-                request.user.id
-            )
-            return created_response(
-                data=reservation,
-                message='Reservation created successfully'
+            computed = self.reservation_service.validate_and_compute_for_checkout(
+                reservation_data
             )
         except ValueError as e:
             return error_response(str(e))
+
+        import uuid
+        reservation_id = str(uuid.uuid4())
+        total_price = computed['total_price']
+        currency = computed.get('currency', 'USD')
+        from decimal import Decimal
+        amount = Decimal(str(total_price))
+
+        try:
+            payment = self.payment_service.create_payment_for_checkout(
+                reservation_id=reservation_id,
+                amount=amount,
+                currency=currency,
+                user=request.user,
+                payment_data=payment_data,
+            )
+        except ValueError as e:
+            return error_response(str(e))
+
+        result = self.payment_service.process_payment(payment, payment_data['payment_token'])
+
+        if not result['success']:
+            detail_serializer = PaymentDetailSerializer(result['payment'])
+            return error_response(
+                result.get('error', 'Error al procesar el pago'),
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                error_code=result.get('error_code'),
+                additional_data={'data': detail_serializer.data}
+            )
+
+        try:
+            reservation = self.reservation_service.create_reservation_after_payment(
+                computed, str(request.user.id), reservation_id
+            )
         except Exception as e:
             return error_response(
-                f'Error creating reservation: {str(e)}',
+                f'Pago realizado pero error al guardar la reserva: {str(e)}',
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+        payment_serializer = PaymentDetailSerializer(result['payment'])
+        return created_response(
+            data={
+                'reservation': reservation,
+                'payment': payment_serializer.data,
+            },
+            message='Reserva y pago realizados correctamente'
+        )
     
     def list(self, request):
         """

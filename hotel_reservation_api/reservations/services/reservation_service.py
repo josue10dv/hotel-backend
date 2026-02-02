@@ -4,6 +4,7 @@ Contiene toda la lógica de negocio y operaciones de base de datos.
 """
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from django.utils import timezone
 from bson import ObjectId
 from bson.errors import InvalidId
 from app.mongodb import mongo_db
@@ -94,7 +95,86 @@ class ReservationService:
         reservation_document['_id'] = str(result.inserted_id)
         
         return self._format_reservation(reservation_document)
-    
+
+    def validate_and_compute_for_checkout(self, reservation_data: Dict) -> Dict:
+        """
+        Valida los datos de reservación y calcula total. No persiste nada.
+        Usado por checkout: solo se guarda la reserva cuando el pago es exitoso.
+        Returns:
+            Dict con datos listos para crear la reserva (hotel_id, room_id, check_in, check_out,
+            nights, total_price, price_per_night, number_of_guests, guest_details, etc.)
+        Raises:
+            ValueError: Si hotel/room no existen, fechas inválidas, no disponible o capacidad.
+        """
+        hotel = self._get_hotel(reservation_data['hotel_id'])
+        if not hotel:
+            raise ValueError("Hotel no encontrado")
+        room = self._get_room(hotel, reservation_data['room_id'])
+        if not room:
+            raise ValueError("Habitación no encontrada")
+        check_in = reservation_data['check_in']
+        check_out = reservation_data['check_out']
+        self._validate_dates(check_in, check_out)
+        if not self.check_availability(
+            reservation_data['hotel_id'],
+            reservation_data['room_id'],
+            check_in,
+            check_out,
+        ):
+            raise ValueError("La habitación no está disponible en las fechas seleccionadas")
+        if reservation_data.get('number_of_guests', 1) > room.get('capacity', 1):
+            raise ValueError(f"La habitación tiene capacidad máxima de {room['capacity']} huéspedes")
+        nights = (check_out - check_in).days
+        price_per_night = room.get('price_per_night', 0.0)
+        total_price = nights * price_per_night
+        return {
+            'hotel_id': reservation_data['hotel_id'],
+            'room_id': reservation_data['room_id'],
+            'check_in': check_in,
+            'check_out': check_out,
+            'nights': nights,
+            'number_of_guests': reservation_data.get('number_of_guests', 1),
+            'guest_details': reservation_data.get('guest_details', {}),
+            'special_requests': reservation_data.get('special_requests', ''),
+            'price_per_night': price_per_night,
+            'total_price': total_price,
+            'currency': reservation_data.get('currency', 'USD'),
+            'owner_id': str(hotel['owner_id']),
+        }
+
+    def create_reservation_after_payment(
+        self, computed_data: Dict, guest_id: str, reservation_id: str
+    ) -> Dict:
+        """
+        Crea la reservación en MongoDB solo después de pago exitoso.
+        payment_status se guarda como 'paid'.
+        """
+        from bson import ObjectId
+        reservation_document = ReservationSchema.get_default_document()
+        reservation_document.update({
+            'reservation_id': reservation_id,
+            'hotel_id': ObjectId(computed_data['hotel_id']),
+            'room_id': computed_data['room_id'],
+            'guest_id': str(guest_id),
+            'owner_id': computed_data['owner_id'],
+            'check_in': computed_data['check_in'],
+            'check_out': computed_data['check_out'],
+            'nights': computed_data['nights'],
+            'number_of_guests': computed_data['number_of_guests'],
+            'guest_details': computed_data.get('guest_details', {}),
+            'price_per_night': computed_data['price_per_night'],
+            'total_price': computed_data['total_price'],
+            'currency': computed_data.get('currency', 'USD'),
+            'special_requests': computed_data.get('special_requests', ''),
+            'status': 'pending',
+            'payment_status': 'paid',
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        })
+        result = self.collection.insert_one(reservation_document)
+        reservation_document['_id'] = result.inserted_id
+        return self._format_reservation(reservation_document)
+
     def get_reservation_by_id(self, reservation_id: str) -> Optional[Dict]:
         """
         Obtiene una reservación por su ID.
@@ -319,18 +399,17 @@ class ReservationService:
         return None
     
     def _validate_dates(self, check_in: datetime, check_out: datetime):
-        """Valida que las fechas sean correctas."""
-        now = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        if check_in < now:
+        """Valida que las fechas sean correctas. Usa timezone-aware (now) para comparar con check_in/check_out de la API."""
+        now = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        check_in_midnight = check_in.replace(hour=0, minute=0, second=0, microsecond=0)
+        if check_in_midnight < now:
             raise ValueError("La fecha de entrada no puede ser en el pasado")
         
         if check_out <= check_in:
             raise ValueError("La fecha de salida debe ser posterior a la fecha de entrada")
         
-        # Validar que no sea más de 1 año en el futuro
         max_date = now + timedelta(days=365)
-        if check_in > max_date:
+        if check_in_midnight > max_date:
             raise ValueError("No se pueden hacer reservaciones con más de un año de anticipación")
     
     def _validate_status_transition(self, current_status: str, new_status: str):

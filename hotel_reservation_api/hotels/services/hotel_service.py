@@ -23,6 +23,22 @@ def _to_bson_safe(obj):
     return obj
 
 
+def _coordinates_to_geojson(coordinates) -> Optional[Dict]:
+    """
+    Convierte coordenadas a formato GeoJSON para el índice 2dsphere.
+    Acepta { lat, lng } o ya GeoJSON { type: "Point", coordinates: [lng, lat] }.
+    """
+    if not coordinates:
+        return None
+    if coordinates.get('type') == 'Point' and 'coordinates' in coordinates:
+        return coordinates
+    lat = coordinates.get('lat')
+    lng = coordinates.get('lng')
+    if lat is not None and lng is not None:
+        return {'type': 'Point', 'coordinates': [float(lng), float(lat)]}
+    return None
+
+
 class HotelService:
     """
     Servicio para operaciones CRUD de hoteles en MongoDB.
@@ -44,6 +60,14 @@ class HotelService:
         Returns:
             Hotel creado con su ID
         """
+        # Normalizar coordenadas a GeoJSON (2dsphere) si vienen como { lat, lng }
+        hotel_data = _to_bson_safe(dict(hotel_data))
+        address = hotel_data.get('address') or {}
+        coords = _coordinates_to_geojson(address.get('coordinates'))
+        if coords is not None:
+            hotel_data['address'] = dict(address)
+            hotel_data['address']['coordinates'] = coords
+
         # Obtener documento base y actualizarlo con los datos
         hotel_document = HotelSchema.get_default_document()
         hotel_document.update(hotel_data)
@@ -156,6 +180,15 @@ class HotelService:
             
             if not existing_hotel:
                 return None
+
+            # Normalizar coordenadas a GeoJSON si se actualiza address
+            address = update_data.get('address')
+            if address and isinstance(address, dict):
+                coords = _coordinates_to_geojson(address.get('coordinates'))
+                if coords is not None:
+                    update_data = dict(update_data)
+                    update_data['address'] = dict(address)
+                    update_data['address']['coordinates'] = coords
             
             # Actualizar fecha de modificación
             update_data['updated_at'] = datetime.utcnow()

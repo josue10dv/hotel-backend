@@ -3,6 +3,7 @@ Serializers de reservaciones.
 """
 from .reservation_serializer import (
     ReservationCreateSerializer,
+    CheckoutSerializer,
     ReservationListSerializer,
     ReservationDetailSerializer,
     ReservationUpdateSerializer,
@@ -11,6 +12,7 @@ from .reservation_serializer import (
 
 __all__ = [
     'ReservationCreateSerializer',
+    'CheckoutSerializer',
     'ReservationListSerializer',
     'ReservationDetailSerializer',
     'ReservationUpdateSerializer',

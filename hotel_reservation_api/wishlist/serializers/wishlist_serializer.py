@@ -4,6 +4,8 @@ Serializers para la funcionalidad de wishlist.
 from rest_framework import serializers
 from bson import ObjectId
 
+from hotels.serializers.hotel_serializer import _coordinates_to_lat_lng
+
 
 class WishlistHotelSerializer(serializers.Serializer):
     """
@@ -30,16 +32,15 @@ class WishlistHotelSerializer(serializers.Serializer):
     added_at = serializers.DateTimeField(read_only=True)
     
     def get_location(self, obj):
-        """Extrae las coordenadas en formato {lat, lng} para Google Maps."""
+        """Extrae las coordenadas en formato {lat, lng} para Google Maps. Acepta GeoJSON o { lat, lng }."""
         try:
             coords = obj.get("address", {}).get("coordinates", {})
-            lat = coords.get("lat", 0.0)
-            lng = coords.get("lng", 0.0)
-            
-            # Retornar None si las coordenadas son inválidas
+            normalized = _coordinates_to_lat_lng(coords)
+            if not normalized:
+                return None
+            lat, lng = normalized["lat"], normalized["lng"]
             if lat == 0.0 and lng == 0.0:
                 return None
-                
             return {"lat": lat, "lng": lng}
         except (AttributeError, TypeError):
             return None
