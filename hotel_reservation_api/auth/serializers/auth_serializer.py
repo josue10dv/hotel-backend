@@ -6,15 +6,22 @@ from rest_framework_simplejwt.exceptions import TokenError
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Serializer personalizado para autenticación de usuarios.
-
-    Hereda de TokenObtainPairSerializer para customizar la generación de tokens JWT.
-    Retorna access token en el body y prepara refresh token para cookie segura.
+    Serializer personalizado que extiende TokenObtainPairSerializer para personalizar la generación de tokens JWT.
+    Devuelve el token de acceso en el cuerpo de la respuesta y prepara el token de actualización para
+    almacenamiento seguro en una cookie HTTP-only.
     """
 
     @classmethod
     def get_token(cls, user):
-        """Agrega claims personalizados (username, email) al payload del token JWT."""
+        """
+        Agrega claims personalizados al token JWT.
+        
+        Args:
+            user: Instancia de User para generar el token.
+            
+        Returns:
+            RefreshToken: Token con claims personalizados (username, email).
+        """
         token = super().get_token(user)
         token["username"] = user.username
         token["email"] = user.email
@@ -22,10 +29,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         """
-        Valida credenciales y prepara la respuesta de autenticación.
+        Valida las credenciales y prepara la respuesta de autenticación.
 
-        Guarda el refresh token en un atributo para que la vista lo establezca en cookie.
-        Retorna solo el access token y datos del usuario en el body.
+        Almacena el token de actualización en un atributo de instancia para la configuración de la cookie por la vista.
+        Devuelve solo el token de acceso y los datos del usuario en el cuerpo de la respuesta.
+        
+        Args:
+            attrs (dict): Atributos de entrada validados.
+            
+        Returns:
+            dict: Datos de autenticación con token de acceso e información del usuario.
         """
         data = super().validate(attrs)
         self.refresh_token = data["refresh"]
@@ -44,31 +57,41 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class CookieTokenRefreshSerializer(serializers.Serializer):
     """
-    Serializer para refrescar el access token usando refresh token de cookie.
+    Serializer para refrescar el token de acceso usando el token de actualización almacenado en cookie.
 
-    Obtiene el refresh token desde cookie HttpOnly (no del body) y genera
-    un nuevo access token. Si hay rotación habilitada, genera nuevo refresh token.
+    Recupera el token de actualización de una cookie HTTP-only (no del cuerpo de la solicitud) y
+    genera un nuevo token de acceso. Con la rotación de tokens habilitada, también genera
+    un nuevo token de actualización.
     """
 
     def validate(self, attrs):
         """
-        Valida el refresh token y genera nuevo access token.
+        Valida el token de actualización y genera un nuevo token de acceso.
 
-        El refresh token se obtiene del contexto (pasado desde la vista).
-        Si ROTATE_REFRESH_TOKENS está habilitado, también genera nuevo refresh token.
+        El token de actualización se obtiene del contexto (pasado desde la vista).
+        Si ROTATE_REFRESH_TOKENS está habilitado, también genera un nuevo token de actualización.
+        
+        Args:
+            attrs (dict): Atributos de entrada validados (diccionario vacío).
+            
+        Returns:
+            dict: Nuevo token de acceso y opcionalmente nuevo token de actualización.
+            
+        Raises:
+            ValidationError: Si el token de actualización falta o es inválido.
         """
         refresh = self.context.get("refresh_token")
 
         if not refresh:
             raise serializers.ValidationError(
-                "Refresh token no encontrado en la cookie."
+                "Token de refresco no encontrado en la cookie."
             )
 
         try:
             refresh_token = RefreshToken(refresh)
             data = {"access": str(refresh_token.access_token)}
 
-            # Si hay rotación de tokens configurada
+            # If token rotation is configured
             if hasattr(refresh_token, "blacklist"):
                 refresh_token.blacklist()
                 new_refresh = RefreshToken.for_user(refresh_token.user)
@@ -79,32 +102,42 @@ class CookieTokenRefreshSerializer(serializers.Serializer):
         except TokenError as e:
             raise serializers.ValidationError(f"Token inválido: {str(e)}")
 
-
 class LogoutSerializer(serializers.Serializer):
     """
-    Serializer para cerrar sesión (logout).
+    Serializer para el cierre de sesión del usuario.
 
-    Obtiene el refresh token de la cookie y lo agrega a la blacklist
+    Recupera el token de actualización de la cookie y lo agrega a la lista negra
     para invalidarlo permanentemente.
     """
 
     def validate(self, attrs):
-        """Valida que exista un refresh token en la cookie."""
+        """
+        Valida que el token de actualización exista en la cookie.
+        
+        Args:
+            attrs (dict): Atributos de entrada validados (diccionario vacío).
+            
+        Returns:
+            dict: Atributos validados.
+            
+        Raises:
+            ValidationError: Si el token de actualización no se encuentra en la cookie.
+        """
         self.token = self.context.get("refresh_token")
 
         if not self.token:
             raise serializers.ValidationError(
-                "Refresh token no encontrado en la cookie."
+                "Token de refresco no encontrado en la cookie."
             )
 
         return attrs
 
     def save(self, **kwargs):
         """
-        Invalida el refresh token agregándolo a la blacklist.
+        Invalida el token de actualización agregándolo a la lista negra.
 
         El token queda permanentemente invalidado y no puede usarse
-        para generar nuevos access tokens.
+        para generar nuevos tokens de acceso.
         """
         try:
             token = RefreshToken(self.token)

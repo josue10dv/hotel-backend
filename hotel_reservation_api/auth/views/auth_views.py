@@ -1,148 +1,145 @@
 from rest_framework import status
-from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.conf import settings
 from auth.serializers import (
     CustomTokenObtainPairSerializer,
     CookieTokenRefreshSerializer,
     LogoutSerializer,
 )
+from app.utilities import (
+    error_response,
+    validation_error_response,
+    success_response,
+    set_refresh_token_cookie,
+    delete_refresh_token_cookie,
+    get_refresh_token_from_cookie,
+)
 
 
 class LoginView(APIView):
     """
-    Vista para autenticación de usuarios (login).
+    Autentica usuarios y emite tokens JWT.
 
-    Valida credenciales, genera tokens JWT y establece:
-    - Access token en el body de la respuesta
-    - Refresh token en cookie HttpOnly segura
+    Valida credenciales y retorna:
+    - Token de acceso en el cuerpo de la respuesta
+    - Token de actualización en cookie HTTP-only segura
 
     Endpoint: POST /api/auth/login/
-    """
 
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        """
-        Autentica al usuario y retorna tokens.
-
-        Payload esperado:
+    Body de la petición:
         {
             "username": "string",
             "password": "string"
         }
-        """
-        serializer = CustomTokenObtainPairSerializer(data=request.data)
 
-        if serializer.is_valid():
-            data = serializer.validated_data
-            response = Response(data, status=status.HTTP_200_OK)
-
-            # Establecer refresh token en cookie segura
-            response.set_cookie(
-                key=settings.REFRESH_TOKEN_COOKIE_NAME,
-                value=serializer.refresh_token,
-                max_age=settings.REFRESH_TOKEN_COOKIE_MAX_AGE,
-                secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
-                httponly=settings.REFRESH_TOKEN_COOKIE_HTTPONLY,
-                samesite=settings.REFRESH_TOKEN_COOKIE_SAMESITE,
-            )
-
-            return response
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-class RefreshTokenView(APIView):
-    """
-    Vista para refrescar el access token.
-
-    Obtiene el refresh token de la cookie, valida que no esté en blacklist
-    y genera un nuevo access token. Si hay rotación habilitada, también
-    genera un nuevo refresh token.
-
-    Endpoint: POST /api/auth/refresh/
+    Respuesta (200):
+        {
+            "access": "jwt_token",
+            "user": {
+                "id": "uuid",
+                "username": "string",
+                "email": "string",
+                ...
+            }
+        }
     """
 
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """Genera un nuevo access token usando el refresh token de la cookie."""
-        refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+        """Autentica al usuario y retorna tokens JWT."""
+        serializer = CustomTokenObtainPairSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return validation_error_response(serializer.errors)
+
+        data = serializer.validated_data
+        response = success_response(data=data)
+        
+        # Establecer token de actualización en cookie segura
+        return set_refresh_token_cookie(response, serializer.refresh_token)
+
+
+class RefreshTokenView(APIView):
+    """
+    Refresca el token de acceso usando el token de actualización de la cookie.
+
+    Valida el token de actualización de la cookie HTTP-only y genera un nuevo
+    token de acceso. Con rotación de tokens habilitada, también emite nuevo token de actualización.
+
+    Endpoint: POST /api/auth/refresh/
+
+    Respuesta (200):
+        {
+            "access": "new_jwt_token"
+        }
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """Genera nuevo token de acceso usando el token de actualización de la cookie."""
+        refresh_token = get_refresh_token_from_cookie(request)
 
         if not refresh_token:
-            return Response(
-                {"error": "Refresh token no encontrado en cookie."},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return error_response(
+                'Token de actualización no encontrado en cookie',
+                status_code=status.HTTP_401_UNAUTHORIZED
             )
 
         serializer = CookieTokenRefreshSerializer(
-            data={}, context={"refresh_token": refresh_token}
+            data={}, context={'refresh_token': refresh_token}
         )
 
-        if serializer.is_valid():
-            data = serializer.validated_data
-            response = Response({"access": data["access"]}, status=status.HTTP_200_OK)
+        if not serializer.is_valid():
+            return validation_error_response(serializer.errors)
 
-            # Si hay rotación de tokens, actualizar cookie con nuevo refresh
-            if "refresh" in data:
-                response.set_cookie(
-                    key=settings.REFRESH_TOKEN_COOKIE_NAME,
-                    value=data["refresh"],
-                    max_age=settings.REFRESH_TOKEN_COOKIE_MAX_AGE,
-                    secure=settings.REFRESH_TOKEN_COOKIE_SECURE,
-                    httponly=settings.REFRESH_TOKEN_COOKIE_HTTPONLY,
-                    samesite=settings.REFRESH_TOKEN_COOKIE_SAMESITE,
-                )
+        data = serializer.validated_data
+        response = success_response(data={'access': data['access']})
 
-            return response
+        # Actualizar cookie con nuevo token de actualización si la rotación está habilitada
+        if 'refresh' in data:
+            return set_refresh_token_cookie(response, data['refresh'])
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return response
 
 
 class LogoutView(APIView):
     """
-    Vista para cerrar sesión (logout).
+    Cierra sesión del usuario invalidando el token de actualización.
 
-    Invalida el refresh token agregándolo a la blacklist y elimina
-    la cookie del navegador. El access token actual sigue válido hasta
-    su expiración natural.
+    Agrega el token de actualización a la lista negra y elimina la cookie del navegador.
+    Nota: El token de acceso permanece válido hasta su expiración natural.
 
     Endpoint: POST /api/auth/logout/
+
+    Respuesta (205):
+        {
+            "message": "Successfully logged out"
+        }
     """
 
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        """
-        Cierra la sesión del usuario invalidando el refresh token.
-
-        Agrega el refresh token a la blacklist para prevenir la generación
-        de nuevos access tokens.
-        """
-        refresh_token = request.COOKIES.get(settings.REFRESH_TOKEN_COOKIE_NAME)
+        """Invalida el token de actualización y elimina la cookie."""
+        refresh_token = get_refresh_token_from_cookie(request)
 
         if not refresh_token:
-            return Response(
-                {"error": "No hay sesión activa."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return error_response('No se encontró sesión activa')
 
-        serializer = LogoutSerializer(data={}, context={"refresh_token": refresh_token})
+        serializer = LogoutSerializer(
+            data={}, context={'refresh_token': refresh_token}
+        )
 
-        if serializer.is_valid():
-            serializer.save()
-            response = Response(
-                {"message": "Logout exitoso."}, status=status.HTTP_205_RESET_CONTENT
-            )
+        if not serializer.is_valid():
+            return validation_error_response(serializer.errors)
 
-            # Eliminar cookie del navegador
-            response.delete_cookie(
-                key=settings.REFRESH_TOKEN_COOKIE_NAME,
-                samesite=settings.REFRESH_TOKEN_COOKIE_SAMESITE,
-            )
+        serializer.save()
+        response = success_response(
+            message='Sesión cerrada exitosamente',
+            status_code=status.HTTP_205_RESET_CONTENT
+        )
 
-            return response
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Remove cookie from browser
+        return delete_refresh_token_cookie(response)

@@ -1,10 +1,10 @@
 """
-Views para la gestión de hoteles.
+Vistas para la gestión de hoteles.
+
 Implementa endpoints REST usando ViewSets de Django REST Framework.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from hotels.serializers import (
     HotelSerializer,
@@ -14,6 +14,14 @@ from hotels.serializers import (
     RoomSerializer,
 )
 from hotels.services.hotel_service import HotelService
+from app.utilities import (
+    created_response,
+    success_response,
+    validation_error_response,
+    not_found_response,
+    parse_pagination_params,
+    extract_filters_from_params,
+)
 
 
 class HotelViewSet(viewsets.ViewSet):
@@ -41,8 +49,9 @@ class HotelViewSet(viewsets.ViewSet):
     def get_permissions(self):
         """
         Define permisos según la acción.
-        - list, retrieve, search: Público (AllowAny)
-        - create, update, partial_update, destroy, my_hotels, room operations: Autenticado
+        
+        Acciones públicas: list, retrieve, search
+        Acciones autenticadas: create, update, destroy, operaciones de habitaciones
         """
         if self.action in ['list', 'retrieve', 'search']:
             return [AllowAny()]
@@ -50,109 +59,95 @@ class HotelViewSet(viewsets.ViewSet):
     
     def create(self, request):
         """
+        Crea un nuevo hotel.
+        
         POST /api/hotels/
-        Crear un nuevo hotel.
         """
         serializer = HotelCreateSerializer(data=request.data)
         
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response(serializer.errors)
         
-        # Crear hotel con el ID del usuario autenticado como propietario
+        # Create hotel with authenticated user as owner
         hotel = self.hotel_service.create_hotel(
             hotel_data=serializer.validated_data,
             owner_id=request.user.id
         )
         
-        # Serializar respuesta
+        # Serialize response
         response_serializer = HotelSerializer(hotel)
-        
-        return Response(
-            response_serializer.data,
-            status=status.HTTP_201_CREATED
-        )
+        return created_response(response_serializer.data, 'Hotel created successfully')
     
     def list(self, request):
         """
+        Lista todos los hoteles con paginación y filtros.
+        
         GET /api/hotels/
-        Listar todos los hoteles con paginación.
         
         Query params:
-        - page: Número de página (default: 1)
-        - page_size: Tamaño de página (default: 20, max: 100)
-        - city: Filtrar por ciudad
-        - country: Filtrar por país
-        - property_type: Filtrar por tipo de propiedad
+            - page: Número de página (default: 1)
+            - page_size: Tamaño de página (default: 20, max: 100)
+            - city: Filtrar por ciudad
+            - country: Filtrar por país
+            - property_type: Filtrar por tipo de propiedad
         """
-        # Paginación
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
-        skip = (page - 1) * page_size
+        # Parse pagination parameters
+        pagination = parse_pagination_params(request.query_params)
         
-        # Filtros
+        # Build filters
         filters = {}
-        
         if request.query_params.get('city'):
             filters['address.city'] = request.query_params.get('city')
-        
         if request.query_params.get('country'):
             filters['address.country'] = request.query_params.get('country')
-        
         if request.query_params.get('property_type'):
             filters['property_type'] = request.query_params.get('property_type')
         
-        # Obtener hoteles y total
+        # Fetch hotels and total count
         hotels = self.hotel_service.list_hotels(
             filters=filters,
-            skip=skip,
-            limit=page_size
+            skip=pagination['skip'],
+            limit=pagination['page_size']
         )
         total = self.hotel_service.count_hotels(filters=filters)
         
-        # Serializar
+        # Serialize and return
         serializer = HotelListSerializer(hotels, many=True)
         
-        return Response({
+        return success_response(data={
             'count': total,
-            'page': page,
-            'page_size': page_size,
-            'total_pages': (total + page_size - 1) // page_size,
+            'page': pagination['page'],
+            'page_size': pagination['page_size'],
+            'total_pages': (total + pagination['page_size'] - 1) // pagination['page_size'],
             'results': serializer.data
         })
     
     def retrieve(self, request, pk=None):
         """
+        Obtiene el detalle de un hotel específico.
+        
         GET /api/hotels/{id}/
-        Obtener detalle de un hotel específico.
         """
         hotel = self.hotel_service.get_hotel_by_id(pk)
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel no encontrado'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel')
         
         serializer = HotelSerializer(hotel)
-        return Response(serializer.data)
+        return success_response(data=serializer.data)
     
     def update(self, request, pk=None):
         """
+        Actualiza un hotel completo (solo propietario).
+        
         PUT /api/hotels/{id}/
-        Actualizar un hotel completo (solo propietario).
         """
         serializer = HotelUpdateSerializer(data=request.data)
         
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response(serializer.errors)
         
-        # Actualizar hotel verificando que sea el propietario
+        # Update hotel checking ownership
         hotel = self.hotel_service.update_hotel(
             hotel_id=pk,
             update_data=serializer.validated_data,
@@ -160,28 +155,23 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel no encontrado o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel')
         
         response_serializer = HotelSerializer(hotel)
-        return Response(response_serializer.data)
+        return success_response(data=response_serializer.data)
     
     def partial_update(self, request, pk=None):
         """
+        Actualiza parcialmente un hotel (solo propietario).
+        
         PATCH /api/hotels/{id}/
-        Actualizar parcialmente un hotel (solo propietario).
         """
         serializer = HotelUpdateSerializer(data=request.data, partial=True)
         
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response(serializer.errors)
         
-        # Actualizar hotel verificando que sea el propietario
+        # Update hotel checking ownership
         hotel = self.hotel_service.update_hotel(
             hotel_id=pk,
             update_data=serializer.validated_data,
@@ -189,18 +179,16 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel no encontrado o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel')
         
         response_serializer = HotelSerializer(hotel)
-        return Response(response_serializer.data)
+        return success_response(data=response_serializer.data)
     
     def destroy(self, request, pk=None):
         """
+        Elimina un hotel (soft delete, solo propietario).
+        
         DELETE /api/hotels/{id}/
-        Eliminar un hotel (soft delete, solo propietario).
         """
         success = self.hotel_service.delete_hotel(
             hotel_id=pk,
@@ -209,32 +197,28 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not success:
-            return Response(
-                {'detail': 'Hotel no encontrado o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel')
         
-        return Response(
-            {'detail': 'Hotel eliminado correctamente'},
-            status=status.HTTP_204_NO_CONTENT
+        return success_response(
+            message='Hotel deleted successfully',
+            status_code=status.HTTP_204_NO_CONTENT
         )
     
     @action(detail=False, methods=['get'], url_path='my-hotels')
     def my_hotels(self, request):
         """
+        Obtiene todos los hoteles del usuario autenticado.
+        
         GET /api/hotels/my-hotels/
-        Obtener todos los hoteles del usuario autenticado.
         """
-        # Paginación
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
-        skip = (page - 1) * page_size
+        # Parsear paginación
+        pagination = parse_pagination_params(request.query_params)
         
         # Obtener hoteles del usuario
         hotels = self.hotel_service.get_hotels_by_owner(
             owner_id=request.user.id,
-            skip=skip,
-            limit=page_size
+            skip=pagination['skip'],
+            limit=pagination['page_size']
         )
         
         # Contar total
@@ -245,27 +229,25 @@ class HotelViewSet(viewsets.ViewSet):
         # Serializar
         serializer = HotelListSerializer(hotels, many=True)
         
-        return Response({
+        return success_response(data={
             'count': total,
-            'page': page,
-            'page_size': page_size,
-            'total_pages': (total + page_size - 1) // page_size,
+            'page': pagination['page'],
+            'page_size': pagination['page_size'],
+            'total_pages': (total + pagination['page_size'] - 1) // pagination['page_size'],
             'results': serializer.data
         })
     
     @action(detail=True, methods=['post'], url_path='add-room')
     def add_room(self, request, pk=None):
         """
+        Agrega una habitación al hotel (solo propietario).
+        
         POST /api/hotels/{id}/add-room/
-        Agregar una habitación al hotel (solo propietario).
         """
         serializer = RoomSerializer(data=request.data)
         
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response(serializer.errors)
         
         # Agregar habitación
         hotel = self.hotel_service.add_room(
@@ -275,30 +257,25 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel no encontrado o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel')
         
         response_serializer = HotelSerializer(hotel)
-        return Response(
-            response_serializer.data,
-            status=status.HTTP_201_CREATED
+        return created_response(
+            data=response_serializer.data,
+            message='Habitación agregada exitosamente'
         )
     
     @action(detail=True, methods=['put', 'patch'], url_path='update-room/(?P<room_id>[^/.]+)')
     def update_room(self, request, pk=None, room_id=None):
         """
+        Actualiza una habitación específica (solo propietario).
+        
         PUT/PATCH /api/hotels/{id}/update-room/{room_id}/
-        Actualizar una habitación específica (solo propietario).
         """
         serializer = RoomSerializer(data=request.data, partial=True)
         
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response(serializer.errors)
         
         # Actualizar habitación
         hotel = self.hotel_service.update_room(
@@ -309,19 +286,20 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel o habitación no encontrado, o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel o habitación')
         
         response_serializer = HotelSerializer(hotel)
-        return Response(response_serializer.data)
+        return success_response(
+            data=response_serializer.data,
+            message='Habitación actualizada exitosamente'
+        )
     
     @action(detail=True, methods=['delete'], url_path='delete-room/(?P<room_id>[^/.]+)')
     def delete_room(self, request, pk=None, room_id=None):
         """
+        Elimina una habitación específica (solo propietario).
+        
         DELETE /api/hotels/{id}/delete-room/{room_id}/
-        Eliminar una habitación específica (solo propietario).
         """
         hotel = self.hotel_service.delete_room(
             hotel_id=pk,
@@ -330,46 +308,42 @@ class HotelViewSet(viewsets.ViewSet):
         )
         
         if not hotel:
-            return Response(
-                {'detail': 'Hotel o habitación no encontrado, o no tienes permisos'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return not_found_response('Hotel o habitación')
         
         response_serializer = HotelSerializer(hotel)
-        return Response(response_serializer.data)
+        return success_response(
+            data=response_serializer.data,
+            message='Habitación eliminada exitosamente'
+        )
     
     @action(detail=False, methods=['get'], url_path='search')
     def search(self, request):
         """
-        GET /api/hotels/search/?q=texto
         Búsqueda de texto completo en hoteles.
+        
+        GET /api/hotels/search/?q=texto
         """
         search_query = request.query_params.get('q', '')
         
         if not search_query:
-            return Response(
-                {'detail': 'Parámetro de búsqueda "q" requerido'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return validation_error_response('Parámetro de búsqueda "q" requerido')
         
         # Paginación
-        page = int(request.query_params.get('page', 1))
-        page_size = min(int(request.query_params.get('page_size', 20)), 100)
-        skip = (page - 1) * page_size
+        pagination = parse_pagination_params(request.query_params)
         
         # Búsqueda
         hotels = self.hotel_service.search_hotels(
             search_text=search_query,
-            skip=skip,
-            limit=page_size
+            skip=pagination['skip'],
+            limit=pagination['page_size']
         )
         
         # Serializar
         serializer = HotelListSerializer(hotels, many=True)
         
-        return Response({
+        return success_response(data={
             'count': len(hotels),
-            'page': page,
-            'page_size': page_size,
+            'page': pagination['page'],
+            'page_size': pagination['page_size'],
             'results': serializer.data
         })
