@@ -1,12 +1,11 @@
 """
 MongoDB connection manager for the application.
-Use this module to interact with MongoDB collections.
+Conexión a MongoDB como servicio en el servidor (Ubuntu). Usa variables de entorno.
 """
 
 from pymongo import MongoClient
 from django.conf import settings
 from urllib.parse import quote_plus
-import certifi
 
 
 class MongoDBConnection:
@@ -25,46 +24,27 @@ class MongoDBConnection:
         return cls._instance
 
     def _initialize_connection(self):
-        """Initialize MongoDB connection using settings."""
+        """Inicializa la conexión a MongoDB usando variables de entorno (servicio en Ubuntu)."""
         mongo_settings = settings.MONGODB_SETTINGS
-        
-        host = mongo_settings['host']
-        port = mongo_settings['port']
-        db_name = mongo_settings['db']
-        username = mongo_settings.get('username', '')
-        password = mongo_settings.get('password', '')
-        
-        # MongoDB Atlas (.mongodb.net) usa mongodb+srv://. Docker/local usa mongodb://host:port
-        is_atlas = '.mongodb.net' in host
-        auth_source = mongo_settings.get('auth_source', 'admin')
 
-        if is_atlas:
-            # Atlas: mongodb+srv:// (sin puerto). Auth opcional.
-            if username and password:
-                username_encoded = quote_plus(username)
-                password_encoded = quote_plus(password)
-                connection_string = (
-                    f"mongodb+srv://{username_encoded}:{password_encoded}@{host}/"
-                    f"{db_name}?authSource={auth_source}&retryWrites=true&w=majority"
-                )
-            else:
-                connection_string = f"mongodb+srv://{host}/{db_name}?retryWrites=true&w=majority"
-        else:
-            # Docker / local: mongodb://host:port
-            if username and password:
-                username_encoded = quote_plus(username)
-                password_encoded = quote_plus(password)
-                connection_string = (
-                    f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                    f"{db_name}?authSource={auth_source}"
-                )
-            else:
-                connection_string = f"mongodb://{host}:{port}/"
+        host = mongo_settings["host"]
+        port = mongo_settings["port"]
+        db_name = mongo_settings["db"]
+        username = mongo_settings.get("username", "").strip()
+        password = mongo_settings.get("password", "").strip()
+        auth_source = mongo_settings.get("auth_source", "admin")
 
-        if is_atlas:
-            self._client = MongoClient(connection_string, tlsCAFile=certifi.where())
+        if username and password:
+            username_encoded = quote_plus(username)
+            password_encoded = quote_plus(password)
+            connection_string = (
+                f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
+                f"{db_name}?authSource={auth_source}"
+            )
         else:
-            self._client = MongoClient(connection_string)
+            connection_string = f"mongodb://{host}:{port}/{db_name}"
+
+        self._client = MongoClient(connection_string)
         self._db = self._client[db_name]
 
     @property
