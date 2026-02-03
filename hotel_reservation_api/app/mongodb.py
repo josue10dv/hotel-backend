@@ -36,6 +36,7 @@ class MongoDBConnection:
         
         # MongoDB Atlas (.mongodb.net) usa mongodb+srv://. Docker/local usa mongodb://host:port
         is_atlas = '.mongodb.net' in host
+        auth_source = mongo_settings.get('auth_source', 'admin')
 
         if is_atlas:
             # Atlas: mongodb+srv:// (sin puerto). Auth opcional.
@@ -44,7 +45,7 @@ class MongoDBConnection:
                 password_encoded = quote_plus(password)
                 connection_string = (
                     f"mongodb+srv://{username_encoded}:{password_encoded}@{host}/"
-                    f"{db_name}?retryWrites=true&w=majority"
+                    f"{db_name}?authSource={auth_source}&retryWrites=true&w=majority"
                 )
             else:
                 connection_string = f"mongodb+srv://{host}/{db_name}?retryWrites=true&w=majority"
@@ -55,7 +56,7 @@ class MongoDBConnection:
                 password_encoded = quote_plus(password)
                 connection_string = (
                     f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                    f"{db_name}?authSource=admin"
+                    f"{db_name}?authSource={auth_source}"
                 )
             else:
                 connection_string = f"mongodb://{host}:{port}/"

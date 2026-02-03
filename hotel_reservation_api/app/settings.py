@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
 from . import env_settings
@@ -101,12 +102,14 @@ DATABASES = {
 }
 
 # MongoDB Configuration
+# MONGO_AUTH_SOURCE: opcional; por defecto "admin" (donde suele estar el usuario en MongoDB/Atlas)
 MONGODB_SETTINGS = {
     "db": env_settings["MONGO_DB_NAME"],
     "host": env_settings["MONGO_HOST"],
     "port": int(env_settings["MONGO_PORT"]),
     "username": env_settings["MONGO_USER"],
     "password": env_settings["MONGO_PASSWORD"],
+    "auth_source": os.getenv("MONGO_AUTH_SOURCE", "admin"),
 }
 
 
