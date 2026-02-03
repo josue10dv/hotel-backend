@@ -101,15 +101,15 @@ DATABASES = {
     }
 }
 
-# MongoDB Configuration
-# MONGO_AUTH_SOURCE: opcional; por defecto "admin" (donde suele estar el usuario en MongoDB/Atlas)
+# MongoDB Configuration (servicio en Ubuntu)
+# MONGO_AUTH_SOURCE: base donde está el usuario. Por defecto la misma DB de la app (común en Ubuntu).
 MONGODB_SETTINGS = {
     "db": env_settings["MONGO_DB_NAME"],
     "host": env_settings["MONGO_HOST"],
     "port": int(env_settings["MONGO_PORT"]),
     "username": env_settings["MONGO_USER"],
     "password": env_settings["MONGO_PASSWORD"],
-    "auth_source": os.getenv("MONGO_AUTH_SOURCE", "admin"),
+    "auth_source": os.getenv("MONGO_AUTH_SOURCE", env_settings["MONGO_DB_NAME"]),
 }
 
 

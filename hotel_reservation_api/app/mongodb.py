@@ -32,14 +32,13 @@ class MongoDBConnection:
         db_name = mongo_settings["db"]
         username = mongo_settings.get("username", "").strip()
         password = mongo_settings.get("password", "").strip()
-        auth_source = mongo_settings.get("auth_source", "admin")
 
         if username and password:
             username_encoded = quote_plus(username)
             password_encoded = quote_plus(password)
             connection_string = (
                 f"mongodb://{username_encoded}:{password_encoded}@{host}:{port}/"
-                f"{db_name}?authSource={auth_source}"
+                f"{db_name}?authSource={db_name}"
             )
         else:
             connection_string = f"mongodb://{host}:{port}/{db_name}"
